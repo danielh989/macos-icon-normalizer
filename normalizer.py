@@ -233,7 +233,11 @@ def is_hard_square(reps):
         return mean_a, std
     for x0,y0 in ((0,0),(w-s,0),(0,h-s),(w-s,h-s)):
         mean_a, std = corner(x0,y0)
-        if mean_a < 230 or std > 12:   # must be opaque AND a flat colour
+        # mean_a > 60 accepts solid/gradient fills that reach the edge (incl.
+        # icons already given a small rounding, like a gradient tile); it still
+        # rejects logos on transparency (corner alpha ~0). std <= 12 rejects a
+        # border / edge detail that the mask would clip.
+        if mean_a < 60 or std > 12:
             return False
     return True
 
