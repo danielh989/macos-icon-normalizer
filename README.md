@@ -46,21 +46,35 @@ canvas. Right: rescaled to the native ~82% proportion with a transparent margin.
 
 ## Compatibility
 
-- **Tested on macOS 15 Sequoia.** It very likely works on earlier releases too —
-  everything it relies on (`iconutil`, `sips`, `NSWorkspace.setIcon`, the
-  Launchpad database, `launchd`) has been around for many macOS versions — but
-  Sequoia is the only version it has actually been verified on.
-- **macOS 26 Tahoe: untested.** Tahoe replaced Launchpad with a new app
-  launcher, so the Launchpad database this tool uses to detect user-facing apps
-  may be absent or different. If it is, the scanner automatically falls back to
-  `Info.plist` heuristics (`LSUIElement` / `LSBackgroundOnly` / nesting), which
-  is less precise at excluding installers and helpers. Feedback/PRs for Tahoe
-  are welcome.
+- **macOS 15 Sequoia — primary target.** This is where it's most useful and most
+  tested. It very likely works on earlier releases too (everything it relies on —
+  `iconutil`, `sips`, `NSWorkspace.setIcon`, the Launchpad database, `launchd` —
+  has been around for many macOS versions).
+
+- **macOS 26 Tahoe — tested (26.3.2, in a VM), works with caveats.** Two findings:
+  - **Launchpad is gone**, so the Launchpad-database gate can't run; the scanner
+    automatically falls back to `Info.plist` heuristics (`LSUIElement` /
+    `LSBackgroundOnly` / nesting). Less precise at excluding installers/helpers,
+    but functional.
+  - **It still helps, for a different reason.** Tahoe's Liquid Glass already
+    forces icons into a squircle, but a legacy full-bleed, hard-cornered icon
+    gets dropped into a gray *"icon jail"* container (inset, with a gray backing
+    plate). Because this tool re-saves the icon with a **transparent margin**,
+    Tahoe can mask it into a clean native squircle instead of jailing it — so on
+    Tahoe the tool's role shifts from *resizing* (the system does that now) to
+    *giving Tahoe a maskable icon*. In testing, an oversized third-party app went
+    from the gray jailed box to a clean edge-to-edge squircle after normalization.
+
+  ![macOS Tahoe: legacy icon jail vs. normalized squircle](docs/tahoe-icon-jail.png)
+
+- **macOS 27 Golden Gate — not tested.** It inherits Tahoe's Liquid Glass icon
+  system; virtualizing it on a Sequoia host isn't currently possible (device
+  support for a 27 guest ships only with Xcode 27, which requires a Tahoe host).
 
 ## Requirements
 
-- macOS (verified on Sequoia; likely fine on earlier releases — see the
-  compatibility note above).
+- macOS (verified on Sequoia and on Tahoe 26.3.2 — see the compatibility note
+  above for how behavior differs on Tahoe).
 - Xcode **Command Line Tools** (`xcode-select --install`) — provides `python3`,
   `iconutil` and `sips`.
 - Admin rights (`sudo`) — most apps in `/Applications` are owned by `root`, and
