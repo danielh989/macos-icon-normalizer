@@ -210,22 +210,32 @@ def fill_of(reps):
     return max((b[2]-b[0])/w, (b[3]-b[1])/h)
 
 def is_hard_square(reps):
-    """True if the art is a (near-)square that fills to its edges with opaque
-    corners -- i.e. it would benefit from the native squircle mask. Icons that
-    are logos on transparency, or already rounded, have transparent corners and
-    return False."""
+    """True only when the art is a near-square whose four corners are both
+    OPAQUE and near-UNIFORM in color -- i.e. rounding them into a squircle is
+    guaranteed invisible. This deliberately rejects:
+      * logos on transparency / already-rounded icons (transparent corners), and
+      * icons with a border or edge detail (opaque but high colour variance),
+        which the squircle mask would clip and make look broken.
+    """
+    import statistics
     im = reps[max(reps)]
     b = im.getchannel("A").getbbox()
     if not b: return False
-    art = im.crop(b); a = art.getchannel("A"); w,h = art.size
-    if min(w,h) < 8 or abs(w-h) > 0.12*max(w,h):
+    art = im.crop(b); a = art.getchannel("A"); rgb = art.convert("RGB"); w,h = art.size
+    if min(w,h) < 8 or abs(w-h) > 0.10*max(w,h):
         return False
     s = max(2, int(min(w,h)*0.06))
-    def patch(x0,y0):
-        px = [a.getpixel((x,y)) for x in range(x0,x0+s) for y in range(y0,y0+s)]
-        return sum(px)/len(px)
-    corners = (patch(0,0), patch(w-s,0), patch(0,h-s), patch(w-s,h-s))
-    return all(c > 200 for c in corners)
+    def corner(x0,y0):
+        alphas = [a.getpixel((x,y)) for x in range(x0,x0+s) for y in range(y0,y0+s)]
+        pxs = [rgb.getpixel((x,y)) for x in range(x0,x0+s) for y in range(y0,y0+s)]
+        mean_a = sum(alphas)/len(alphas)
+        std = sum(statistics.pstdev(c) for c in zip(*pxs))/3
+        return mean_a, std
+    for x0,y0 in ((0,0),(w-s,0),(0,h-s),(w-s,h-s)):
+        mean_a, std = corner(x0,y0)
+        if mean_a < 230 or std > 12:   # must be opaque AND a flat colour
+            return False
+    return True
 
 _mask_cache = {}
 def _squircle_mask(px, body):
