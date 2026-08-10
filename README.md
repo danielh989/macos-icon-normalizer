@@ -50,21 +50,13 @@ canvas. Right: rescaled to the native ~82% proportion with a transparent margin.
   releases (it relies only on long-standing pieces: `iconutil`, `sips`,
   `NSWorkspace.setIcon`, the Launchpad database, `launchd`).
 
-- **macOS 26 Tahoe — works, with two differences:**
-  - Launchpad no longer exposes its database, so the Launchpad-based app filter
-    can't run; the scanner falls back to `Info.plist` heuristics (`LSUIElement` /
-    `LSBackgroundOnly` / nesting) — less precise at excluding installers/helpers,
-    but functional.
-  - Tahoe's Liquid Glass forces every icon into a squircle, and a legacy
-    full-bleed, hard-cornered icon gets dropped into a gray *"icon jail"*
-    container. Because this tool re-saves icons with a transparent margin, Tahoe
-    masks them into a clean native squircle instead — so the tool's role shifts
-    from *resizing* (the system does that now) to *giving Tahoe a maskable icon*.
+- **macOS 26 Tahoe — works.** One difference: Launchpad no longer exposes its
+  database, so the Launchpad-based app filter can't run and the scanner falls
+  back to `Info.plist` heuristics (less precise at excluding installers/helpers,
+  but functional). Tahoe renders third-party icons as provided, so normalization
+  behaves the same as on Sequoia.
 
-  ![macOS Tahoe: legacy icon jail vs. normalized squircle](docs/tahoe-icon-jail.png)
-
-- **macOS 27 Golden Gate** inherits Tahoe's Liquid Glass icon system, so the same
-  behavior is expected.
+- **macOS 27 Golden Gate** inherits Tahoe's Liquid Glass icon system.
 
 ## Requirements
 
