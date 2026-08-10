@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""
+icon-normalizer -- shrink oversized macOS app icons to the native proportion.
+
+Some third-party apps (audio plugins, cross-platform installers, etc.) ship an
+icon whose artwork fills the whole 1024x1024 canvas, so it looks noticeably
+bigger than Apple's icons in the Dock, Launchpad and Finder. This tool finds
+those apps and rescales the artwork to the native macOS proportion (~82% of the
+canvas, with transparent margin), then applies it as a *custom* icon -- without
+touching the app bundle's own .icns or its code signature.
+
+Design highlights
+-----------------
+* No hard-coded app list. It scans installed apps and decides per-icon.
+* "User-facing" apps only: it gates on the Launchpad database, which is what
+  cleanly separates real apps from installers / uninstallers / background
+  agents (Info.plist and codesign flags are not enough on their own).
+* Apple apps are skipped (com.apple.* bundle id or "Software Signing" authority).
+* Idempotent: apps that already have a custom icon are left alone; icon
+  measurements are cached by mtime so re-scans are cheap.
+* Faithful rescale: every output size is derived from the original .icns
+  representation at that same size, not from one downscaled master.
+* Reversible: `--revert` removes the custom icons this tool applied.
+
+Modes
+-----
+    normalizer.py            apply (needs sudo for root-owned apps)
+    normalizer.py --dry-run  report what it would do, change nothing
+    normalizer.py --revert   remove custom icons previously applied by this tool
+
+Configuration (environment variables)
+-------------------------------------
+    ICON_NORMALIZER_THRESHOLD   fill fraction that counts as oversized (0.92)
+    ICON_NORMALIZER_CONTENT     target fill after normalization        (0.82)
+    ICON_NORMALIZER_SCAN_DIRS   colon-separated roots to scan   (/Applications)
+"""
+import os, sys, subprocess, plistlib, glob, json, hashlib, datetime, sqlite3, pwd
+from PIL import Image
+
+# ---- config -----------------------------------------------------------------
+def _envf(name, default):
+    try: return float(os.environ.get(name, default))
+    except ValueError: return default
+
+THRESHOLD    = _envf("ICON_NORMALIZER_THRESHOLD", 0.92)
+CONTENT_FRAC = _envf("ICON_NORMALIZER_CONTENT", 0.82)
+SCAN_DIRS    = os.environ.get("ICON_NORMALIZER_SCAN_DIRS", "/Applications").split(":")
+
+HERE        = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR   = os.path.join(HERE, "generated")           # generated .icns live here
+STATE_FILE  = os.path.join(HERE, "state.json")          # measure cache + applied set
+LOG         = os.path.join(HERE, "icon-normalizer.log")
+ICONSET = [("16x16",16),("16x16@2x",32),("32x32",32),("32x32@2x",64),
+           ("128x128",128),("128x128@2x",256),("256x256",256),
+           ("256x256@2x",512),("512x512",512),("512x512@2x",1024)]
+
+DRY    = "--dry-run" in sys.argv
+REVERT = "--revert" in sys.argv
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def log(msg):
+    line = f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {msg}"
+    print(line)
+    if not DRY:
+        try:
+            with open(LOG, "a") as f: f.write(line + "\n")
+        except Exception: pass
+
+# ---- discovery --------------------------------------------------------------
+def find_apps():
+    apps = []
+    for root in SCAN_DIRS:
+        for dirpath, dirnames, _ in os.walk(root):
+            keep = []
+            for d in dirnames:
+                if d.endswith(".app"):
+                    apps.append(os.path.join(dirpath, d))   # don't descend into apps
+                else:
+                    keep.append(d)
+            dirnames[:] = keep
+    return sorted(set(apps))
+
+def info_plist(app):
+    p = os.path.join(app, "Contents", "Info.plist")
+    if os.path.exists(p):
+        try:
+            with open(p, "rb") as f: return plistlib.load(f)
+        except Exception: pass
+    return {}
+
+def bundle_id(app):
+    return info_plist(app).get("CFBundleIdentifier")
+
+def is_apple(app):
+    if (bundle_id(app) or "").startswith("com.apple."):
+        return True
+    try:
+        r = subprocess.run(["codesign","-dvvv",app], capture_output=True, text=True)
+        for line in (r.stdout + r.stderr).splitlines():
+            if line.startswith("Authority="):
+                auth = line.split("=",1)[1]
+                if auth in ("Software Signing","Apple Mac OS Application Signing"):
+                    return True
+                if auth.startswith(("Developer ID Application","Apple Development")):
+                    return False
+    except Exception:
+        pass
+    return False
+
+def custom_icon_present(app):
+    return os.path.exists(os.path.join(app, "Icon\r"))
+
+# ---- "shows in Launchpad/Dock" via the Launchpad database -------------------
+def _console_user():
+    try:
+        u = subprocess.run(["stat","-f","%Su","/dev/console"],
+                           capture_output=True, text=True).stdout.strip()
+        return u or None
+    except Exception:
+        return None
+
+def find_launchpad_db():
+    """Locate the logged-in user's Launchpad DB, even when running as root."""
+    user = _console_user()
+    uid = None
+    if user and user != "root":
+        try: uid = pwd.getpwnam(user).pw_uid
+        except KeyError: pass
+    cands = glob.glob("/var/folders/*/*/0/com.apple.dock.launchpad/db/db")
+    for p in cands:
+        try:
+            if uid is None or os.stat(p).st_uid == uid:
+                return p
+        except OSError:
+            continue
+    return cands[0] if cands else None
+
+def launchpad_bundle_ids():
+    """Bundle ids that appear in Launchpad (real, user-facing apps), or None."""
+    db = find_launchpad_db()
+    if not db or not os.path.exists(db):
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        ids = {r[0] for r in con.execute(
+            "SELECT bundleid FROM apps WHERE bundleid IS NOT NULL")}
+        con.close()
+        return ids or None
+    except Exception:
+        return None
+
+# ---- fallback heuristic when the Launchpad DB is unreadable ------------------
+NESTED = (".app",".bundle",".framework",".plugin",".xpc",".appex")
+def _truthy(v):
+    return v is True or str(v).strip().lower() in ("1","true","yes")
+
+def is_dock_app(app):
+    parent = os.path.dirname(app)
+    while parent and parent != "/":
+        if parent.endswith(NESTED): return False
+        parent = os.path.dirname(parent)
+    pl = info_plist(app)
+    if _truthy(pl.get("LSUIElement")) or _truthy(pl.get("LSBackgroundOnly")):
+        return False
+    pkg = pl.get("CFBundlePackageType")
+    return not (pkg and pkg != "APPL")
+
+# ---- icon handling ----------------------------------------------------------
+def find_icns(app):
+    pl = info_plist(app)
+    name = pl.get("CFBundleIconFile") or pl.get("CFBundleIconName")
+    res = os.path.join(app, "Contents", "Resources")
+    if name:
+        if not name.endswith(".icns"): name += ".icns"
+        c = os.path.join(res, name)
+        if os.path.exists(c): return c
+    ic = glob.glob(os.path.join(res, "*.icns"))
+    return max(ic, key=os.path.getsize) if ic else None
+
+def reps_from_icns(icns, workdir):
+    iconset = os.path.join(workdir, "orig.iconset")
+    subprocess.run(["rm","-rf",iconset], check=False)
+    subprocess.run(["iconutil","-c","iconset",icns,"-o",iconset], capture_output=True)
+    reps = {}
+    pngs = glob.glob(os.path.join(iconset,"*.png")) if os.path.isdir(iconset) else []
+    if not pngs:
+        out = os.path.join(workdir, "sips.png")
+        subprocess.run(["sips","-s","format","png",icns,"--out",out], capture_output=True)
+        if os.path.exists(out):
+            im = Image.open(out).convert("RGBA"); reps[im.size[0]] = im
+        return reps
+    for p in pngs:
+        im = Image.open(p).convert("RGBA"); w,h = im.size
+        if w == h: reps[w] = im
+    return reps
+
+def fill_of(reps):
+    if not reps: return None
+    im = reps[max(reps)]
+    b = im.getchannel("A").getbbox()
+    if not b: return None
+    w,h = im.size
+    return max((b[2]-b[0])/w, (b[3]-b[1])/h)
+
+def _level(src, px):
+    im = src; b = im.getchannel("A").getbbox()
+    if b: im = im.crop(b)
+    w,h = im.size; target = int(px*CONTENT_FRAC); s = target/max(w,h)
+    nw,nh = max(1,round(w*s)), max(1,round(h*s))
+    im = im.resize((nw,nh), Image.LANCZOS)
+    c = Image.new("RGBA",(px,px),(0,0,0,0)); c.paste(im, ((px-nw)//2,(px-nh)//2), im)
+    return c
+
+def _pick(reps, px):
+    if px in reps: return reps[px]
+    bigger = sorted(s for s in reps if s > px)
+    return reps[bigger[0]] if bigger else reps[max(reps)]
+
+def build_norm_icns(reps, out_path, workdir):
+    iconset = os.path.join(workdir, "out.iconset")
+    subprocess.run(["rm","-rf",iconset], check=False); os.makedirs(iconset)
+    cache = {}
+    for base,px in ICONSET:
+        if px not in cache: cache[px] = _level(_pick(reps,px), px)
+        cache[px].save(os.path.join(iconset, f"icon_{base}.png"))
+    r = subprocess.run(["iconutil","-c","icns",iconset,"-o",out_path], capture_output=True)
+    return r.returncode == 0
+
+# ---- state ------------------------------------------------------------------
+def load_state():
+    try:
+        with open(STATE_FILE) as f:
+            s = json.load(f)
+        s.setdefault("measure", {}); s.setdefault("applied", {})
+        return s
+    except Exception:
+        return {"measure": {}, "applied": {}}
+
+def save_state(s):
+    if DRY: return
+    try:
+        with open(STATE_FILE,"w") as f: json.dump(s, f, indent=0)
+    except Exception: pass
+
+def refresh_ui():
+    subprocess.run(["killall","Dock"], check=False)
+    subprocess.run(["killall","Finder"], check=False)
+
+# ---- modes ------------------------------------------------------------------
+def revert():
+    from AppKit import NSWorkspace
+    ws = NSWorkspace.sharedWorkspace()
+    state = load_state()
+    n = 0
+    for app in list(state["applied"].keys()):
+        if os.path.isdir(app) and custom_icon_present(app):
+            if ws.setIcon_forFile_options_(None, app, 0):
+                log(f"reverted: {app}"); n += 1
+        state["applied"].pop(app, None)
+    save_state(state)
+    if n: refresh_ui()
+    log(f"revert done: {n} app(s) restored")
+
+def run():
+    from AppKit import NSWorkspace, NSImage
+    ws = NSWorkspace.sharedWorkspace()
+    state = load_state()
+    lp = launchpad_bundle_ids()
+    log(f"Launchpad set: {len(lp)} apps -> gating on it" if lp
+        else "Launchpad DB unavailable -> Info.plist fallback")
+    changed = 0; would = []
+    for app in find_apps():
+        if lp is not None:
+            if (bundle_id(app) or "") not in lp: continue
+        elif not is_dock_app(app):
+            continue
+        if custom_icon_present(app):
+            continue
+        icns = find_icns(app)
+        if not icns: continue
+        try: mtime = os.path.getmtime(icns)
+        except OSError: continue
+        cached = state["measure"].get(icns)
+        if cached and cached.get("mtime")==mtime and cached.get("fill",1) < THRESHOLD:
+            continue
+        if is_apple(app):
+            state["measure"][icns] = {"mtime":mtime,"fill":0.0,"apple":True}
+            continue
+        wd = os.path.join(CACHE_DIR, hashlib.md5(app.encode()).hexdigest())
+        os.makedirs(wd, exist_ok=True)
+        reps = reps_from_icns(icns, wd); fill = fill_of(reps)
+        if fill is None: continue
+        state["measure"][icns] = {"mtime":mtime,"fill":fill}
+        if fill < THRESHOLD: continue
+        out = os.path.join(wd, "normalized.icns")
+        if not build_norm_icns(reps, out, wd):
+            log(f"FAIL build icns: {app}"); continue
+        if DRY:
+            would.append((app, fill)); continue
+        img = NSImage.alloc().initWithContentsOfFile_(out)
+        if img and ws.setIcon_forFile_options_(img, app, 0):
+            log(f"normalized ({fill*100:.0f}%): {app}")
+            state["applied"][app] = bundle_id(app) or ""
+            changed += 1
+        else:
+            log(f"FAIL setIcon (permissions? need sudo): {app}")
+    save_state(state)
+    if DRY:
+        print(f"\n[DRY-RUN] would normalize {len(would)} app(s) "
+              f"(threshold {THRESHOLD*100:.0f}%):")
+        for app,fill in sorted(would, key=lambda x:-x[1]):
+            print(f"  {fill*100:5.1f}%  {app}")
+        print("Apple apps and already-customized apps are skipped.")
+    elif changed:
+        refresh_ui()
+        log(f"done: normalized {changed}, Dock/Finder refreshed")
+
+if __name__ == "__main__":
+    (revert if REVERT else run)()
