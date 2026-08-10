@@ -124,6 +124,13 @@ Set via environment variables (bake them in with `install.sh`, or edit the
 | `ICON_NORMALIZER_THRESHOLD` | `0.92` | Fill fraction that counts as *oversized*. |
 | `ICON_NORMALIZER_CONTENT` | `0.82` | Target fill after normalization. |
 | `ICON_NORMALIZER_SCAN_DIRS` | `/Applications` | Colon-separated roots to scan. |
+| `ICON_NORMALIZER_SQUIRCLE` | `auto` | Give square icons the native rounded shape. `auto` = only full-bleed, hard-cornered squares; `on` = always; `off` = never. Override per-run with `--squircle` / `--no-squircle`. |
+
+**Squircle shaping.** Many oversized icons are hard-cornered squares (common with
+audio plugins and cross-platform apps). In `auto` mode the tool masks those into
+Apple's rounded-squircle shape so they match native icons, while leaving logos on
+transparent backgrounds untouched. The shape is baked into the icon, so it looks
+right on both Sequoia and Tahoe.
 
 > The default `0.92` deliberately leaves near-native icons untouched (e.g. apps
 > whose art fills ~85–91% of the canvas). Lower it toward `0.90` to catch more,
