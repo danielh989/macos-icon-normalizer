@@ -26,6 +26,9 @@ cp -f "$REPO/normalizer.py" "$DEST/"
 
 echo "==> Creating self-contained venv (Pillow + pyobjc)"
 [ -x "$DEST/venv/bin/python" ] || /usr/bin/python3 -m venv "$DEST/venv"
+# Upgrade pip first: the stock pip on a fresh macOS/CLT Python is often too old
+# to find prebuilt wheels and falls back to building pyobjc from source (fails).
+"$DEST/venv/bin/pip" install --quiet --upgrade pip
 "$DEST/venv/bin/pip" install --quiet --disable-pip-version-check -r "$REPO/requirements.txt"
 "$DEST/venv/bin/python" -c "import PIL, AppKit; print('   deps OK')"
 
