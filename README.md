@@ -140,6 +140,27 @@ The shape is baked into the icon, so it looks right on both Sequoia and Tahoe.
 
 ---
 
+## GUI app (optional)
+
+A small AppKit control panel lives in [`app/`](app/). It monitors the watcher
+log and lets you apply / reset icons and pick the squircle mode with buttons and
+toggles instead of the command line. It drives the same installed scanner under
+`/usr/local/icon-normalizer` (install the daemon first).
+
+```sh
+cd app
+./build.sh                     # compiles "Icon Normalizer.app" (needs Xcode/CLT)
+open "Icon Normalizer.app"
+```
+
+It shows the daemon status and a live tail of the log, has an **Off / Auto / On**
+squircle selector and a **Dry run** toggle, and buttons for **Apply now**,
+**Reset icons**, and **Refresh**. Apply/Reset prompt for your admin password
+(needed to touch root-owned apps). The build is ad-hoc signed, so on first launch
+right-click → **Open** to get past Gatekeeper.
+
+---
+
 ## Uninstall
 
 ```sh
@@ -176,6 +197,13 @@ sudo ./uninstall.sh --keep-icons # remove the daemon but keep normalized icons
   scope, lower nothing, or uninstall if you want its new icon verbatim.
 - **Deep sub-folder updates** are caught on the periodic sweep (every 2h) rather
   than instantly, since `WatchPaths` only fires on `/Applications` itself.
+- **Bordered icons aren't squircled.** The squircle mask clips whatever sits in
+  the corners, so an icon with a border/frame at its edge would look broken if
+  rounded. `auto` therefore skips any icon whose corners aren't a flat, uniform
+  colour — even if the rest of it is a clean square. There's no reliable way to
+  tell a "clips fine" border from a "clips badly" one, so these are left as plain
+  (resized) normalization. Force them with `--squircle` / `SQUIRCLE=on` if you
+  accept the risk.
 
 ---
 
