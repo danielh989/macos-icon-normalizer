@@ -60,6 +60,7 @@ ICONSET = [("16x16",16),("16x16@2x",32),("32x32",32),("32x32@2x",64),
 
 DRY    = "--dry-run" in sys.argv
 REVERT = "--revert" in sys.argv
+FORCE  = "--force" in sys.argv   # re-apply even if a custom icon is already set
 if "--squircle" in sys.argv:    SQUIRCLE = "on"
 if "--no-squircle" in sys.argv: SQUIRCLE = "off"
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -319,7 +320,7 @@ def run():
             if (bundle_id(app) or "") not in lp: continue
         elif not is_dock_app(app):
             continue
-        if custom_icon_present(app):
+        if custom_icon_present(app) and not FORCE:
             continue
         icns = find_icns(app)
         if not icns: continue
