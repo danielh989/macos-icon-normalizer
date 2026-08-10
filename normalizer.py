@@ -35,7 +35,7 @@ Configuration (environment variables)
     ICON_NORMALIZER_SCAN_DIRS   colon-separated roots to scan   (/Applications)
 """
 import os, sys, subprocess, plistlib, glob, json, hashlib, datetime, sqlite3, pwd
-from PIL import Image
+from PIL import Image, ImageDraw
 
 # ---- config -----------------------------------------------------------------
 def _envf(name, default):
@@ -45,6 +45,10 @@ def _envf(name, default):
 THRESHOLD    = _envf("ICON_NORMALIZER_THRESHOLD", 0.92)
 CONTENT_FRAC = _envf("ICON_NORMALIZER_CONTENT", 0.82)
 SCAN_DIRS    = os.environ.get("ICON_NORMALIZER_SCAN_DIRS", "/Applications").split(":")
+# Squircle: give full-bleed, hard-cornered square icons the native rounded shape.
+# off = never, on = always, auto = only when the icon is a hard-cornered square.
+SQUIRCLE     = os.environ.get("ICON_NORMALIZER_SQUIRCLE", "auto").strip().lower()
+CORNER_RATIO = 0.2237   # Apple app-icon corner radius as a fraction of the body
 
 HERE        = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR   = os.path.join(HERE, "generated")           # generated .icns live here
@@ -56,6 +60,8 @@ ICONSET = [("16x16",16),("16x16@2x",32),("32x32",32),("32x32@2x",64),
 
 DRY    = "--dry-run" in sys.argv
 REVERT = "--revert" in sys.argv
+if "--squircle" in sys.argv:    SQUIRCLE = "on"
+if "--no-squircle" in sys.argv: SQUIRCLE = "off"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 def log(msg):
@@ -202,10 +208,49 @@ def fill_of(reps):
     w,h = im.size
     return max((b[2]-b[0])/w, (b[3]-b[1])/h)
 
-def _level(src, px):
+def is_hard_square(reps):
+    """True if the art is a (near-)square that fills to its edges with opaque
+    corners -- i.e. it would benefit from the native squircle mask. Icons that
+    are logos on transparency, or already rounded, have transparent corners and
+    return False."""
+    im = reps[max(reps)]
+    b = im.getchannel("A").getbbox()
+    if not b: return False
+    art = im.crop(b); a = art.getchannel("A"); w,h = art.size
+    if min(w,h) < 8 or abs(w-h) > 0.12*max(w,h):
+        return False
+    s = max(2, int(min(w,h)*0.06))
+    def patch(x0,y0):
+        px = [a.getpixel((x,y)) for x in range(x0,x0+s) for y in range(y0,y0+s)]
+        return sum(px)/len(px)
+    corners = (patch(0,0), patch(w-s,0), patch(0,h-s), patch(w-s,h-s))
+    return all(c > 200 for c in corners)
+
+_mask_cache = {}
+def _squircle_mask(px, body):
+    key = (px, body)
+    if key not in _mask_cache:
+        m = Image.new("L", (px, px), 0)
+        off = (px-body)//2
+        ImageDraw.Draw(m).rounded_rectangle(
+            [off, off, off+body-1, off+body-1], radius=int(body*CORNER_RATIO), fill=255)
+        _mask_cache[key] = m
+    return _mask_cache[key]
+
+def _level(src, px, squircle=False):
     im = src; b = im.getchannel("A").getbbox()
     if b: im = im.crop(b)
-    w,h = im.size; target = int(px*CONTENT_FRAC); s = target/max(w,h)
+    w,h = im.size
+    if squircle:
+        # scale the (square) art to fill the body, then clip to the squircle
+        body = int(px*CONTENT_FRAC)
+        im = im.resize((body, body), Image.LANCZOS)
+        c = Image.new("RGBA",(px,px),(0,0,0,0)); off = (px-body)//2
+        c.paste(im, (off, off))
+        mask = _squircle_mask(px, body)
+        c.putalpha(Image.composite(c.getchannel("A"), Image.new("L",(px,px),0), mask))
+        return c
+    target = int(px*CONTENT_FRAC); s = target/max(w,h)
     nw,nh = max(1,round(w*s)), max(1,round(h*s))
     im = im.resize((nw,nh), Image.LANCZOS)
     c = Image.new("RGBA",(px,px),(0,0,0,0)); c.paste(im, ((px-nw)//2,(px-nh)//2), im)
@@ -216,12 +261,12 @@ def _pick(reps, px):
     bigger = sorted(s for s in reps if s > px)
     return reps[bigger[0]] if bigger else reps[max(reps)]
 
-def build_norm_icns(reps, out_path, workdir):
+def build_norm_icns(reps, out_path, workdir, squircle=False):
     iconset = os.path.join(workdir, "out.iconset")
     subprocess.run(["rm","-rf",iconset], check=False); os.makedirs(iconset)
     cache = {}
     for base,px in ICONSET:
-        if px not in cache: cache[px] = _level(_pick(reps,px), px)
+        if px not in cache: cache[px] = _level(_pick(reps,px), px, squircle)
         cache[px].save(os.path.join(iconset, f"icon_{base}.png"))
     r = subprocess.run(["iconutil","-c","icns",iconset,"-o",out_path], capture_output=True)
     return r.returncode == 0
@@ -292,14 +337,15 @@ def run():
         if fill is None: continue
         state["measure"][icns] = {"mtime":mtime,"fill":fill}
         if fill < THRESHOLD: continue
+        sq = (SQUIRCLE == "on") or (SQUIRCLE == "auto" and is_hard_square(reps))
         out = os.path.join(wd, "normalized.icns")
-        if not build_norm_icns(reps, out, wd):
+        if not build_norm_icns(reps, out, wd, sq):
             log(f"FAIL build icns: {app}"); continue
         if DRY:
-            would.append((app, fill)); continue
+            would.append((app, fill, sq)); continue
         img = NSImage.alloc().initWithContentsOfFile_(out)
         if img and ws.setIcon_forFile_options_(img, app, 0):
-            log(f"normalized ({fill*100:.0f}%): {app}")
+            log(f"normalized ({fill*100:.0f}%{', squircle' if sq else ''}): {app}")
             state["applied"][app] = bundle_id(app) or ""
             changed += 1
         else:
@@ -308,8 +354,8 @@ def run():
     if DRY:
         print(f"\n[DRY-RUN] would normalize {len(would)} app(s) "
               f"(threshold {THRESHOLD*100:.0f}%):")
-        for app,fill in sorted(would, key=lambda x:-x[1]):
-            print(f"  {fill*100:5.1f}%  {app}")
+        for app,fill,sq in sorted(would, key=lambda x:-x[1]):
+            print(f"  {fill*100:5.1f}%{'  [squircle]' if sq else '           '}  {app}")
         print("Apple apps and already-customized apps are skipped.")
     elif changed:
         refresh_ui()
