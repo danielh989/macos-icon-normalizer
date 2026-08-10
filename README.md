@@ -46,7 +46,10 @@ canvas. Right: rescaled to the native ~82% proportion with a transparent margin.
 
 ## Compatibility
 
-- **Tested on macOS 15 Sequoia.**
+- **Tested on macOS 15 Sequoia.** It very likely works on earlier releases too —
+  everything it relies on (`iconutil`, `sips`, `NSWorkspace.setIcon`, the
+  Launchpad database, `launchd`) has been around for many macOS versions — but
+  Sequoia is the only version it has actually been verified on.
 - **macOS 26 Tahoe: untested.** Tahoe replaced Launchpad with a new app
   launcher, so the Launchpad database this tool uses to detect user-facing apps
   may be absent or different. If it is, the scanner automatically falls back to
@@ -56,7 +59,8 @@ canvas. Right: rescaled to the native ~82% proportion with a transparent margin.
 
 ## Requirements
 
-- macOS 15 Sequoia (see compatibility note above).
+- macOS (verified on Sequoia; likely fine on earlier releases — see the
+  compatibility note above).
 - Xcode **Command Line Tools** (`xcode-select --install`) — provides `python3`,
   `iconutil` and `sips`.
 - Admin rights (`sudo`) — most apps in `/Applications` are owned by `root`, and
