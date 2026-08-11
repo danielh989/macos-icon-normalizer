@@ -10,9 +10,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 if [ ! -x .venv/bin/python ]; then
     echo "==> Creating local .venv (Pillow + pyobjc)"
-    python3 -m venv .venv
-    .venv/bin/pip install --quiet --upgrade pip
-    .venv/bin/pip install --quiet -r requirements.txt
+    # Build the venv as the real user even under sudo, so it isn't root-owned
+    # (avoids pip cache warnings and permission tangles).
+    AS=""
+    [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ] && AS="sudo -u $SUDO_USER"
+    $AS python3 -m venv .venv
+    $AS .venv/bin/pip install --quiet --upgrade pip
+    $AS .venv/bin/pip install --quiet -r requirements.txt
 fi
 
 # Dry-run changes nothing, so it needs no admin. Everything else touches icons
