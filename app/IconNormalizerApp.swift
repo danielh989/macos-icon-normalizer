@@ -46,6 +46,12 @@ final class Controller: NSObject, NSApplicationDelegate {
     var thresholdValue: NSTextField!
     var busy = false
     var pinnedReport: String?   // when set, the log view shows this (e.g. dry-run) instead of the live log
+    var spinner: NSProgressIndicator!
+
+    func setBusy(_ b: Bool) {
+        busy = b
+        if b { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
     func shq(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
@@ -84,7 +90,10 @@ final class Controller: NSObject, NSApplicationDelegate {
         }
 
         lbl("Icon Normalizer", NSRect(x: M, y: H-42, width: W-2*M, height: 26), bold: true, size: 17)
-        statusLabel = lbl("…", NSRect(x: M, y: H-66, width: W-2*M, height: 18), size: 12, gray: true)
+        statusLabel = lbl("…", NSRect(x: M, y: H-66, width: W-2*M-28, height: 18), size: 12, gray: true)
+        spinner = NSProgressIndicator(frame: NSRect(x: W-M-20, y: H-40, width: 18, height: 18))
+        spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false
+        v.addSubview(spinner)
 
         lbl("Log", NSRect(x: M, y: H-92, width: 200, height: 16), bold: true, size: 11)
         let bClear = NSButton(title: "Clear log", target: self, action: #selector(clearLog))
@@ -92,11 +101,6 @@ final class Controller: NSObject, NSApplicationDelegate {
         bClear.bezelStyle = .rounded; bClear.controlSize = .small; bClear.font = .systemFont(ofSize: 11)
         bClear.toolTip = "Empty the on-demand log."; v.addSubview(bClear)
 
-        let bUnlock = NSButton(title: "Unlock", target: self, action: #selector(unlock))
-        bUnlock.frame = NSRect(x: W-M-104-96, y: H-97, width: 90, height: 22)
-        bUnlock.bezelStyle = .rounded; bUnlock.controlSize = .small; bUnlock.font = .systemFont(ofSize: 11)
-        bUnlock.toolTip = "Enter your admin password once now; actions won't re-ask for a few minutes."
-        v.addSubview(bUnlock)
 
         let scroll = NSScrollView(frame: NSRect(x: M, y: 290, width: W-2*M, height: (H-98)-290))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
@@ -146,10 +150,10 @@ final class Controller: NSObject, NSApplicationDelegate {
         Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in self?.refresh(nil) }
         // Build the venv quietly on first launch so the first action isn't slow.
         if !FileManager.default.isExecutableFile(atPath: PYV) {
-            busy = true; statusLabel.stringValue = "Setting up (first launch, ~1 min)…"
+            setBusy(true); statusLabel.stringValue = "Setting up (first launch, ~1 min)…"
             DispatchQueue.global().async {
                 _ = runShell(self.ensureBackend())
-                DispatchQueue.main.async { self.busy = false; self.refresh(nil) }
+                DispatchQueue.main.async { self.setBusy(false); self.refresh(nil) }
             }
         }
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
@@ -187,12 +191,12 @@ final class Controller: NSObject, NSApplicationDelegate {
     func ensureThenAdmin(_ cmd: String, _ status: String) {
         if busy { return }
         pinnedReport = nil
-        busy = true; statusLabel.stringValue = status
+        setBusy(true); statusLabel.stringValue = status
         DispatchQueue.global().async {
-            let setup = runShell(self.ensureBackend())
-            let out = setup + runAdmin(cmd)     // runAdmin escalates via the admin prompt
+            // Everything in ONE admin call so it all runs as root (one prompt).
+            let out = runAdmin(self.ensureBackend() + " && " + cmd)
             DispatchQueue.main.async {
-                self.busy = false
+                self.setBusy(false)
                 let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {           // show THIS run's output (not stale log)
                     self.pinnedReport = out
@@ -216,11 +220,11 @@ final class Controller: NSObject, NSApplicationDelegate {
         let env = "ICON_NORMALIZER_THRESHOLD=\(thresholdString())"
         if dryRun.state == .on {
             pinnedReport = nil
-            busy = true; statusLabel.stringValue = "Previewing…"
+            setBusy(true); statusLabel.stringValue = "Previewing…"
             DispatchQueue.global().async {
                 let out = runShell("\(self.ensureBackend()) && \(env) \(self.shq(PYV)) \(self.shq(NRM)) --dry-run \(self.squircleFlag())")
                 DispatchQueue.main.async {
-                    self.busy = false
+                    self.setBusy(false)
                     self.pinnedReport = out.isEmpty ? "(no changes)" : out
                     self.logView.string = self.pinnedReport!
                     self.logView.scrollToBeginningOfDocument(nil)
@@ -243,29 +247,20 @@ final class Controller: NSObject, NSApplicationDelegate {
 
     @objc func installWatcher(_ sender: Any?) {
         if busy { return }
-        busy = true; statusLabel.stringValue = "Installing watcher (enter password)…"
+        setBusy(true); statusLabel.stringValue = "Installing watcher (enter password)…"
         DispatchQueue.global().async {
             _ = runAdmin("bash \(self.shq(INSTALLER))")
-            DispatchQueue.main.async { self.busy = false; self.refresh(nil) }
+            DispatchQueue.main.async { self.setBusy(false); self.refresh(nil) }
         }
     }
     @objc func startWatcher(_ s: Any?) { ensureThenAdmin("\(shq(PYV)) \(shq(NRM)) --start-watcher", "Starting watcher…") }
     @objc func stopWatcher(_ s: Any?)  { ensureThenAdmin("\(shq(PYV)) \(shq(NRM)) --stop-watcher", "Stopping watcher…") }
 
-    @objc func unlock(_ s: Any?) {
-        if busy { return }
-        busy = true; statusLabel.stringValue = "Unlocking (enter password once)…"
-        DispatchQueue.global().async {
-            _ = runAdmin("true")   // primes the ~5-min admin auth cache
-            DispatchQueue.main.async {
-                self.busy = false
-                self.statusLabel.stringValue = "Unlocked ✓ — actions won't re-ask for a few minutes."
-            }
-        }
-    }
-
     @objc func clearLog(_ s: Any?) {
-        _ = runShell(": > \(shq(LOG))")   // user-owned log, no admin needed
+        // The log may be owned by root (written during an admin run), but the
+        // containing folder is ours — so rm works where truncation wouldn't.
+        _ = runShell("rm -f \(shq(LOG))")
+        pinnedReport = nil
         refresh(nil)
     }
 }
