@@ -1,5 +1,9 @@
 # icon-normalizer
 
+[![CodeQL](https://github.com/danielh989/macos-icon-normalizer/actions/workflows/codeql.yml/badge.svg)](https://github.com/danielh989/macos-icon-normalizer/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![macOS](https://img.shields.io/badge/macOS-Sequoia%20%7C%20Tahoe-black)
+
 Some macOS apps (audio plugins, vendor tools, cross-platform apps) ship icons
 that fill the whole canvas or use hard square corners, so they look **too big**
 or **off-shape** next to Apple's icons. This resizes them to the native
