@@ -90,21 +90,6 @@ sudo ./uninstall.sh              # remove the watcher, restore original icons
 sudo ./uninstall.sh --keep-icons # remove the watcher but keep normalized icons
 ```
 
-## GUI (optional)
-
-Prefer buttons to the terminal? Build the small app (needs Xcode):
-
-```sh
-cd app
-./build.sh
-open "Icon Normalizer.app"
-```
-
-It runs on-demand (Apply / Reset / Dry run) self-contained — nothing installed to
-the system — with a threshold slider, squircle selector, live log, and an
-optional **Install watcher** button. It's ad-hoc signed, so on first launch
-right-click → **Open** to get past Gatekeeper.
-
 ## License
 
 [MIT](LICENSE).

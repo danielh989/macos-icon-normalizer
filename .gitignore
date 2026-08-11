@@ -7,7 +7,3 @@ state.json
 __pycache__/
 *.pyc
 .DS_Store
-
-# Built GUI app (build it locally with app/build.sh)
-app/build/
-app/*.app/
