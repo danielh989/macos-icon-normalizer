@@ -116,8 +116,9 @@ def is_apple(app):
     return False
 
 def custom_icon_present(app):
-    icon = os.path.join(app, "Icon\r")
-    return os.path.exists(icon) and os.path.getsize(icon) > 0
+    # A custom icon stores its data in the Icon file's RESOURCE fork; the data
+    # fork is 0 bytes. So presence of the file (not its size) is the signal.
+    return os.path.exists(os.path.join(app, "Icon\r"))
 
 def strip_custom_icon(app):
     """Fully remove a custom icon: delete the Icon resource AND clear the
