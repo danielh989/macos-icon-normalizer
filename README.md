@@ -74,8 +74,11 @@ and does the least it can:
 ## Compatibility
 
 - **macOS 15 Sequoia** — primary target (likely fine on earlier releases).
-- **macOS 26 Tahoe** — works (falls back to `Info.plist` heuristics since
-  Launchpad's database is gone); resizing and squircle rounding both apply.
+- **macOS 26 Tahoe** — works. To decide which apps are real third-party apps
+  (vs. Apple apps, installers, helpers, background agents) it normally reads the
+  Launchpad database; Tahoe removed that, so it falls back to `Info.plist`
+  heuristics for the same "is this a user-facing app?" check. Resizing and
+  squircle rounding both still apply.
 - **macOS 27 Golden Gate** — inherits Tahoe's icon system; not directly tested.
 
 Tahoe's Liquid Glass drops non-conforming icons into a gray **"icon jail"**.

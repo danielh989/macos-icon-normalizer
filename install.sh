@@ -22,6 +22,18 @@ PLIST="/Library/LaunchDaemons/$LABEL.plist"
 WRAPPER="$DEST/Icon Normalizer"
 THRESHOLD="${ICON_NORMALIZER_THRESHOLD:-0.92}"
 
+# The watcher inherits the same settings you'd pass to run.sh. Threshold always
+# has a value; the rest are baked in only if you set them.
+ENV_XML="<key>ICON_NORMALIZER_THRESHOLD</key><string>$THRESHOLD</string>"
+RUN_ENV="ICON_NORMALIZER_THRESHOLD=$THRESHOLD"
+for v in ICON_NORMALIZER_SQUIRCLE ICON_NORMALIZER_CONTENT ICON_NORMALIZER_SCAN_DIRS; do
+    val="${!v-}"
+    if [ -n "$val" ]; then
+        ENV_XML="$ENV_XML<key>$v</key><string>$val</string>"
+        RUN_ENV="$RUN_ENV $v=$val"
+    fi
+done
+
 echo "==> Installing to $DEST"
 mkdir -p "$DEST"
 cp -f "$REPO/normalizer.py" "$DEST/"
@@ -40,7 +52,7 @@ mkdir -p /usr/local/bin
 ln -sf "$WRAPPER" /usr/local/bin/icon-normalizer   # short command for manual re-runs
 
 echo "==> Normalizing your icons now"
-ICON_NORMALIZER_THRESHOLD="$THRESHOLD" "$DEST/venv/bin/python" "$DEST/normalizer.py" || true
+env $RUN_ENV "$DEST/venv/bin/python" "$DEST/normalizer.py" || true
 
 echo "==> Installing the watcher ($LABEL)"
 cat > "$PLIST" <<EOF
@@ -52,7 +64,7 @@ cat > "$PLIST" <<EOF
     <key>ProgramArguments</key>
     <array><string>$WRAPPER</string></array>
     <key>EnvironmentVariables</key>
-    <dict><key>ICON_NORMALIZER_THRESHOLD</key><string>$THRESHOLD</string></dict>
+    <dict>$ENV_XML</dict>
     <key>WatchPaths</key>
     <array><string>/Applications</string></array>
     <key>StartInterval</key><integer>7200</integer>

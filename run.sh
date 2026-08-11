@@ -19,9 +19,18 @@ if [ ! -x .venv/bin/python ]; then
     $AS .venv/bin/pip install --quiet -r requirements.txt
 fi
 
-# Dry-run changes nothing, so it needs no admin. Everything else touches icons
-# (root-owned apps need root), so elevate.
+# Forward any ICON_NORMALIZER_* settings across sudo (sudo strips the env),
+# so `ICON_NORMALIZER_THRESHOLD=0.90 ./run.sh` actually reaches the scanner.
+FWD=""
+for v in ICON_NORMALIZER_THRESHOLD ICON_NORMALIZER_SQUIRCLE ICON_NORMALIZER_CONTENT ICON_NORMALIZER_SCAN_DIRS; do
+    [ -n "${!v-}" ] && FWD="$FWD $v=${!v}"
+done
+
+# Dry-run changes nothing (no admin). Everything else touches icons; root-owned
+# apps need root, but only elevate if we aren't already root.
 case " $* " in
-    *" --dry-run "*) .venv/bin/python normalizer.py "$@" ;;
-    *) sudo .venv/bin/python normalizer.py "$@" ;;
+    *" --dry-run "*) env $FWD .venv/bin/python normalizer.py "$@" ;;
+    *)
+        if [ "$(id -u)" -eq 0 ]; then env $FWD .venv/bin/python normalizer.py "$@"
+        else sudo $FWD .venv/bin/python normalizer.py "$@"; fi ;;
 esac
