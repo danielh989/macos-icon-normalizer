@@ -64,11 +64,23 @@ cat > "$PLIST" <<EOF
 </plist>
 EOF
 chown root:wheel "$PLIST"; chmod 644 "$PLIST"
-launchctl bootout system "$PLIST" 2>/dev/null || true
-launchctl bootstrap system "$PLIST"
-launchctl enable "system/$LABEL"
-launchctl kickstart -k "system/$LABEL" || true
+
+# Robust (re)load: unload any existing instance by label AND path first, then
+# bootstrap. "Bootstrap failed: 5" just means it was already loaded, so we fall
+# back to kickstart instead of aborting.
+launchctl bootout "system/$LABEL" 2>/dev/null || true
+launchctl bootout system "$PLIST"    2>/dev/null || true
+launchctl enable "system/$LABEL"     2>/dev/null || true
+if launchctl bootstrap system "$PLIST" 2>/dev/null; then
+    launchctl kickstart -k "system/$LABEL" 2>/dev/null || true
+    echo "    watcher active."
+elif launchctl kickstart -k "system/$LABEL" 2>/dev/null; then
+    echo "    watcher active (was already loaded)."
+else
+    echo "    NOTE: couldn't (re)load the watcher automatically. Try:"
+    echo "      sudo launchctl bootout system/$LABEL; sudo ./install.sh"
+fi
 
 echo ""
-echo "DONE. The watcher is active — your icons stay normalized after updates."
+echo "DONE. The watcher re-applies your icons after app updates."
 echo "  Uninstall:  sudo ./uninstall.sh"
