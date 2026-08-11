@@ -45,6 +45,7 @@ final class Controller: NSObject, NSApplicationDelegate {
     var thresholdSlider: NSSlider!
     var thresholdValue: NSTextField!
     var busy = false
+    var pinnedReport: String?   // when set, the log view shows this (e.g. dry-run) instead of the live log
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
     func shq(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
@@ -90,6 +91,12 @@ final class Controller: NSObject, NSApplicationDelegate {
         bClear.frame = NSRect(x: W-M-104, y: H-97, width: 104, height: 22)
         bClear.bezelStyle = .rounded; bClear.controlSize = .small; bClear.font = .systemFont(ofSize: 11)
         bClear.toolTip = "Empty the on-demand log."; v.addSubview(bClear)
+
+        let bUnlock = NSButton(title: "Unlock", target: self, action: #selector(unlock))
+        bUnlock.frame = NSRect(x: W-M-104-96, y: H-97, width: 90, height: 22)
+        bUnlock.bezelStyle = .rounded; bUnlock.controlSize = .small; bUnlock.font = .systemFont(ofSize: 11)
+        bUnlock.toolTip = "Enter your admin password once now; actions won't re-ask for a few minutes."
+        v.addSubview(bUnlock)
 
         let scroll = NSScrollView(frame: NSRect(x: M, y: 290, width: W-2*M, height: (H-98)-290))
         scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
@@ -137,6 +144,14 @@ final class Controller: NSObject, NSApplicationDelegate {
 
         thresholdChanged(thresholdSlider); refresh(self)
         Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in self?.refresh(nil) }
+        // Build the venv quietly on first launch so the first action isn't slow.
+        if !FileManager.default.isExecutableFile(atPath: PYV) {
+            busy = true; statusLabel.stringValue = "Setting up (first launch, ~1 min)…"
+            DispatchQueue.global().async {
+                _ = runShell(self.ensureBackend())
+                DispatchQueue.main.async { self.busy = false; self.refresh(nil) }
+            }
+        }
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -149,6 +164,7 @@ final class Controller: NSObject, NSApplicationDelegate {
     }
 
     @objc func refresh(_ sender: Any?) {
+        if sender != nil { pinnedReport = nil }   // a real Refresh returns to the live log
         let plist = runShell("ls /Library/LaunchDaemons/*icon-normalizer*.plist 2>/dev/null | head -1")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         var watcher = "not installed"
@@ -156,6 +172,10 @@ final class Controller: NSObject, NSApplicationDelegate {
             let label = (plist as NSString).lastPathComponent.replacingOccurrences(of: ".plist", with: "")
             let running = runShell("launchctl print system/\(label) >/dev/null 2>&1 && echo yes").contains("yes")
             watcher = running ? "running ✓" : "installed (stopped)"
+        }
+        if pinnedReport != nil {
+            statusLabel.stringValue = "Dry-run preview below — press Refresh for the live log"
+            return
         }
         let last = runShell("tail -n 1 \(shq(LOG)) 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
         statusLabel.stringValue = "Watcher: \(watcher)   •   \(last.isEmpty ? "ready — press Apply" : last)"
@@ -166,11 +186,28 @@ final class Controller: NSObject, NSApplicationDelegate {
     // Build venv as the user, then run the privileged part with an admin prompt.
     func ensureThenAdmin(_ cmd: String, _ status: String) {
         if busy { return }
+        pinnedReport = nil
         busy = true; statusLabel.stringValue = status
         DispatchQueue.global().async {
-            _ = runShell(self.ensureBackend())
-            _ = runAdmin(cmd)
-            DispatchQueue.main.async { self.busy = false; self.refresh(nil) }
+            let setup = runShell(self.ensureBackend())
+            let out = setup + runAdmin(cmd)     // runAdmin escalates via the admin prompt
+            DispatchQueue.main.async {
+                self.busy = false
+                let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {           // show THIS run's output (not stale log)
+                    self.pinnedReport = out
+                    self.logView.string = out
+                    self.logView.scrollToEndOfDocument(nil)
+                }
+                let f = out.components(separatedBy: "FAIL setIcon").count - 1
+                if out.lowercased().contains("cancel") {
+                    self.statusLabel.stringValue = "Cancelled — no changes (admin password not entered)."
+                } else if f > 0 {
+                    self.statusLabel.stringValue = "\(f) app(s) failed — you must enter your admin password when prompted."
+                } else {
+                    self.statusLabel.stringValue = "Done ✓ — press Refresh for the live log."
+                }
+            }
         }
     }
 
@@ -178,13 +215,16 @@ final class Controller: NSObject, NSApplicationDelegate {
         if busy { return }
         let env = "ICON_NORMALIZER_THRESHOLD=\(thresholdString())"
         if dryRun.state == .on {
-            busy = true; statusLabel.stringValue = "Preparing preview…"
+            pinnedReport = nil
+            busy = true; statusLabel.stringValue = "Previewing…"
             DispatchQueue.global().async {
                 let out = runShell("\(self.ensureBackend()) && \(env) \(self.shq(PYV)) \(self.shq(NRM)) --dry-run \(self.squircleFlag())")
                 DispatchQueue.main.async {
                     self.busy = false
-                    let a = NSAlert(); a.messageText = "Dry-run preview"
-                    a.informativeText = out.isEmpty ? "(no output)" : out; a.runModal(); self.refresh(nil)
+                    self.pinnedReport = out.isEmpty ? "(no changes)" : out
+                    self.logView.string = self.pinnedReport!
+                    self.logView.scrollToBeginningOfDocument(nil)
+                    self.statusLabel.stringValue = "Dry-run preview below — press Refresh for the live log"
                 }
             }
             return
@@ -211,6 +251,18 @@ final class Controller: NSObject, NSApplicationDelegate {
     }
     @objc func startWatcher(_ s: Any?) { ensureThenAdmin("\(shq(PYV)) \(shq(NRM)) --start-watcher", "Starting watcher…") }
     @objc func stopWatcher(_ s: Any?)  { ensureThenAdmin("\(shq(PYV)) \(shq(NRM)) --stop-watcher", "Stopping watcher…") }
+
+    @objc func unlock(_ s: Any?) {
+        if busy { return }
+        busy = true; statusLabel.stringValue = "Unlocking (enter password once)…"
+        DispatchQueue.global().async {
+            _ = runAdmin("true")   // primes the ~5-min admin auth cache
+            DispatchQueue.main.async {
+                self.busy = false
+                self.statusLabel.stringValue = "Unlocked ✓ — actions won't re-ask for a few minutes."
+            }
+        }
+    }
 
     @objc func clearLog(_ s: Any?) {
         _ = runShell(": > \(shq(LOG))")   // user-owned log, no admin needed
