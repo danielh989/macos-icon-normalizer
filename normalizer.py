@@ -364,6 +364,9 @@ def run():
     from AppKit import NSWorkspace, NSImage
     ws = NSWorkspace.sharedWorkspace()
     state = load_state()
+    if not DRY and os.geteuid() != 0:
+        log("NOTE: not running as root — apps owned by root will be skipped. "
+            "Re-run with:  sudo icon-normalizer")
     lp = launchpad_bundle_ids()
     log(f"Launchpad set: {len(lp)} apps -> gating on it" if lp
         else "Launchpad DB unavailable -> Info.plist fallback")
