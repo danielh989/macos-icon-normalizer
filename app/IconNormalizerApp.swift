@@ -7,6 +7,8 @@ let INSTALL = "/usr/local/icon-normalizer"
 let PY  = "\(INSTALL)/venv/bin/python"
 let NRM = "\(INSTALL)/normalizer.py"
 let LOG = "\(INSTALL)/icon-normalizer.log"
+// backend installer bundled inside the .app (Contents/Resources)
+let INSTALLER = "\(Bundle.main.resourcePath ?? "")/install.sh"
 
 func runShell(_ cmd: String) -> String {
     // -c (not -lc): don't source the login profile, which can print noise.
@@ -127,11 +129,13 @@ final class Controller: NSObject, NSApplicationDelegate {
 
         // ---- watcher controls ----
         lbl("Watcher", NSRect(x: M, y: 48, width: 80, height: 20))
-        button("Start watcher", M+90, 42, 150, #selector(startWatcher),
-               tip: "Enable the background service that re-normalizes icons after app updates.")
-        button("Stop watcher", M+250, 42, 150, #selector(stopWatcher),
-               tip: "Disable the background service. Icons stay as they are until you start it again.")
-        lbl("The watcher re-applies automatically after app updates. Reset stops it.",
+        button("Install watcher", M+90, 42, 150, #selector(installWatcher),
+               tip: "Optional. Copies the scanner into place and installs a background service that re-normalizes icons after app updates.")
+        button("Start", M+250, 42, 95, #selector(startWatcher),
+               tip: "Load the installed watcher.")
+        button("Stop", M+355, 42, 95, #selector(stopWatcher),
+               tip: "Unload the watcher. Icons stay as they are until you start it again.")
+        lbl("The watcher is optional (auto re-apply after updates). Reset stops it.",
             NSRect(x: M, y: 16, width: W-2*M, height: 16), size: 11, gray: true)
 
         thresholdChanged(thresholdSlider)
@@ -164,7 +168,7 @@ final class Controller: NSObject, NSApplicationDelegate {
         let last = runShell("tail -n 1 \(shq(LOG)) 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
         statusLabel.stringValue = installed
             ? "Watcher: \(running ? "running ✓" : "stopped ✕")   •   \(last.isEmpty ? "no log yet" : last)"
-            : "Not installed — run install.sh first."
+            : "Not set up yet — click “Install watcher”, or just press Apply now."
         let tail = runShell("tail -n 200 \(shq(LOG)) 2>/dev/null")
         if logView.string != tail { logView.string = tail; logView.scrollToEndOfDocument(nil) }
     }
@@ -178,12 +182,21 @@ final class Controller: NSObject, NSApplicationDelegate {
         }
     }
 
+    var backendInstalled: Bool { FileManager.default.fileExists(atPath: NRM) }
+
+    func alertInstallFirst() {
+        let a = NSAlert(); a.messageText = "Scanner isn't set up yet"
+        a.informativeText = "Click “Install watcher” first (or just use Apply now — it sets things up on first use)."
+        a.runModal()
+    }
+
     @objc func apply(_ sender: Any?) {
         if busy { return }
         let env = "ICON_NORMALIZER_THRESHOLD=\(thresholdString())"
-        let cmd = "\(env) \(shq(PY)) \(shq(NRM)) \(dryRun.state == .on ? "--dry-run" : "--force") \(squircleFlag())"
         if dryRun.state == .on {
+            guard backendInstalled else { alertInstallFirst(); return }
             busy = true; statusLabel.stringValue = "Previewing…"
+            let cmd = "\(env) \(shq(PY)) \(shq(NRM)) --dry-run \(squircleFlag())"
             DispatchQueue.global().async {
                 let out = runShell(cmd)
                 DispatchQueue.main.async {
@@ -193,13 +206,22 @@ final class Controller: NSObject, NSApplicationDelegate {
                     self.refresh(nil)
                 }
             }
-        } else {
-            runAdminAction(cmd, "Applying (enter admin password)…")
+            return
         }
+        // Real apply: if the backend isn't installed yet, set it up first (no watcher).
+        let prefix = backendInstalled ? "" : "bash \(shq(INSTALLER)) >/dev/null 2>&1 && "
+        let cmd = prefix + "\(env) \(shq(PY)) \(shq(NRM)) --force \(squircleFlag())"
+        runAdminAction(cmd, backendInstalled ? "Applying (enter admin password)…"
+                                             : "Setting up + applying (enter admin password)…")
+    }
+
+    @objc func installWatcher(_ sender: Any?) {
+        runAdminAction("bash \(shq(INSTALLER)) --watcher", "Installing watcher (enter admin password)…")
     }
 
     @objc func reset(_ sender: Any?) {
         if busy { return }
+        guard backendInstalled else { alertInstallFirst(); return }
         let a = NSAlert()
         a.messageText = "Restore original icons?"
         a.informativeText = "Removes the custom icons applied by this tool and stops the watcher so they stay reset."
