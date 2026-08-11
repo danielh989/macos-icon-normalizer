@@ -27,11 +27,11 @@ cd macos-icon-normalizer
 That's it. (`./run.sh --dry-run` first if you want to preview.) Run it again
 whenever you install or update apps.
 
-**Keep them fixed automatically** — optional. Only install this if you want a
-background service that re-applies after every app update:
+**Keep them fixed automatically (the watcher)** — optional. Installs a background
+service that re-applies after every app update:
 
 ```sh
-sudo ./install.sh
+sudo ./install.sh      # installs & starts the watcher (launchd daemon)
 ```
 
 Needs macOS + Xcode Command Line Tools (the first run offers to install them if
