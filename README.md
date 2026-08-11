@@ -1,4 +1,4 @@
-# icon-normalizer
+# macos-icon-normalizer
 
 [![CodeQL](https://github.com/danielh989/macos-icon-normalizer/actions/workflows/codeql.yml/badge.svg)](https://github.com/danielh989/macos-icon-normalizer/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
