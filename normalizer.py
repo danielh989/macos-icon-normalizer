@@ -339,20 +339,48 @@ def refresh_ui():
     subprocess.run(["killall","Finder"], check=False)
 
 # ---- modes ------------------------------------------------------------------
+def _do_revert(ws, app):
+    ws.setIcon_forFile_options_(None, app, 0)
+    strip_custom_icon(app)   # clear kHasCustomIcon too, or Finder shows a folder icon
+    log(f"reverted: {app}")
+
 def revert():
     from AppKit import NSWorkspace
     ws = NSWorkspace.sharedWorkspace()
     state = load_state()
-    n = 0
+    lp = launchpad_bundle_ids()
+    done = set(); n = 0
+
+    # 1) Apps we recorded applying to.
     for app in list(state["applied"].keys()):
-        if os.path.isdir(app):
-            ws.setIcon_forFile_options_(None, app, 0)
-            strip_custom_icon(app)        # clear the flag too, or Finder shows a folder icon
-            log(f"reverted: {app}"); n += 1
+        if os.path.isdir(app) and custom_icon_present(app):
+            _do_revert(ws, app); done.add(app); n += 1
         state["applied"].pop(app, None)
     save_state(state)
-    # Stop the watcher, otherwise it would re-normalize these apps immediately.
-    stop_watcher()
+
+    # 2) Belt-and-suspenders: any user-facing, non-Apple app that still carries a
+    #    custom icon while its OWN bundle icon is oversized is one we normalized
+    #    (we never touch the bundle .icns) -- revert it even if state was lost.
+    tmp = tempfile.mkdtemp(prefix="icon-normalizer-")
+    for app in find_apps():
+        if app in done or not custom_icon_present(app):
+            continue
+        if lp is not None:
+            if (bundle_id(app) or "") not in lp: continue
+        elif not is_dock_app(app):
+            continue
+        if is_apple(app):
+            continue
+        icns = find_icns(app)
+        if not icns:
+            continue
+        wd = os.path.join(tmp, hashlib.md5(app.encode()).hexdigest()); os.makedirs(wd, exist_ok=True)
+        fill = fill_of(reps_from_icns(icns, wd))
+        if fill is not None and fill >= THRESHOLD:
+            _do_revert(ws, app); n += 1
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    stop_watcher()   # otherwise the watcher would re-normalize immediately
     if n:
         subprocess.run(["/bin/rm","-rf","/Library/Caches/com.apple.iconservices.store"], check=False)
         refresh_ui()
