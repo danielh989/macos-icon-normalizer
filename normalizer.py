@@ -34,7 +34,7 @@ Configuration (environment variables)
     ICON_NORMALIZER_CONTENT     target fill after normalization        (0.82)
     ICON_NORMALIZER_SCAN_DIRS   colon-separated roots to scan   (/Applications)
 """
-import os, sys, subprocess, plistlib, glob, json, hashlib, datetime, sqlite3, pwd
+import os, sys, subprocess, plistlib, glob, json, hashlib, datetime, sqlite3, pwd, tempfile, shutil
 from PIL import Image, ImageDraw
 
 # ---- config -----------------------------------------------------------------
@@ -51,7 +51,6 @@ SQUIRCLE     = os.environ.get("ICON_NORMALIZER_SQUIRCLE", "auto").strip().lower(
 CORNER_RATIO = 0.2237   # Apple app-icon corner radius as a fraction of the body
 
 HERE        = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR   = os.path.join(HERE, "generated")           # generated .icns live here
 STATE_FILE  = os.path.join(HERE, "state.json")          # measure cache + applied set
 LOG         = os.path.join(HERE, "icon-normalizer.log")
 ICONSET = [("16x16",16),("16x16@2x",32),("32x32",32),("32x32@2x",64),
@@ -66,7 +65,6 @@ START  = "--start-watcher" in sys.argv
 CLEARLOG = "--clear-log" in sys.argv
 if "--squircle" in sys.argv:    SQUIRCLE = "on"
 if "--no-squircle" in sys.argv: SQUIRCLE = "off"
-os.makedirs(CACHE_DIR, exist_ok=True)
 
 def log(msg):
     line = f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {msg}"
@@ -312,7 +310,7 @@ def _pick(reps, px):
 
 def build_norm_icns(reps, out_path, workdir, squircle=False):
     iconset = os.path.join(workdir, "out.iconset")
-    subprocess.run(["rm","-rf",iconset], check=False); os.makedirs(iconset)
+    subprocess.run(["rm","-rf",iconset], check=False); os.makedirs(iconset, exist_ok=True)
     cache = {}
     for base,px in ICONSET:
         if px not in cache: cache[px] = _level(_pick(reps,px), px, squircle)
@@ -370,6 +368,9 @@ def run():
     lp = launchpad_bundle_ids()
     log(f"Launchpad set: {len(lp)} apps -> gating on it" if lp
         else "Launchpad DB unavailable -> Info.plist fallback")
+    # Per-run scratch dir owned by whoever runs (avoids root/user permission
+    # clashes from a shared cache under the install dir).
+    tmp = tempfile.mkdtemp(prefix="icon-normalizer-")
     changed = 0; would = []
     for app in find_apps():
         if lp is not None:
@@ -388,7 +389,7 @@ def run():
         if is_apple(app):
             state["measure"][icns] = {"mtime":mtime,"fill":0.0,"apple":True}
             continue
-        wd = os.path.join(CACHE_DIR, hashlib.md5(app.encode()).hexdigest())
+        wd = os.path.join(tmp, hashlib.md5(app.encode()).hexdigest())
         os.makedirs(wd, exist_ok=True)
         reps = reps_from_icns(icns, wd); fill = fill_of(reps)
         if fill is None: continue
@@ -408,6 +409,7 @@ def run():
         else:
             log(f"FAIL setIcon (permissions? need sudo): {app}")
     save_state(state)
+    shutil.rmtree(tmp, ignore_errors=True)
     if DRY:
         print(f"\n[DRY-RUN] would normalize {len(would)} app(s) "
               f"(threshold {THRESHOLD*100:.0f}%):")

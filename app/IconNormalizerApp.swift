@@ -127,15 +127,16 @@ final class Controller: NSObject, NSApplicationDelegate {
         button("Refresh", M+330, 92, 130, #selector(refresh),
                tip: "Reload status and log.")
 
-        // ---- watcher controls ----
-        lbl("Watcher", NSRect(x: M, y: 48, width: 80, height: 20))
-        button("Install watcher", M+90, 42, 150, #selector(installWatcher),
-               tip: "Optional. Copies the scanner into place and installs a background service that re-normalizes icons after app updates.")
-        button("Start", M+250, 42, 95, #selector(startWatcher),
+        // ---- setup / watcher controls ----
+        button("Install scanner", M, 42, 140, #selector(installScanner),
+               tip: "Copy the scanner + venv into place for on-demand use (no background service).")
+        button("Install watcher", M+148, 42, 140, #selector(installWatcher),
+               tip: "Also install the background service that re-normalizes icons after app updates.")
+        button("Start", M+296, 42, 90, #selector(startWatcher),
                tip: "Load the installed watcher.")
-        button("Stop", M+355, 42, 95, #selector(stopWatcher),
+        button("Stop", M+394, 42, 90, #selector(stopWatcher),
                tip: "Unload the watcher. Icons stay as they are until you start it again.")
-        lbl("The watcher is optional (auto re-apply after updates). Reset stops it.",
+        lbl("Scanner = on-demand (Apply). Watcher = optional auto re-apply. Reset stops the watcher.",
             NSRect(x: M, y: 16, width: W-2*M, height: 16), size: 11, gray: true)
 
         thresholdChanged(thresholdSlider)
@@ -215,6 +216,9 @@ final class Controller: NSObject, NSApplicationDelegate {
                                              : "Setting up + applying (enter admin password)…")
     }
 
+    @objc func installScanner(_ sender: Any?) {
+        runAdminAction("bash \(shq(INSTALLER))", "Installing scanner (enter admin password)…")
+    }
     @objc func installWatcher(_ sender: Any?) {
         runAdminAction("bash \(shq(INSTALLER)) --watcher", "Installing watcher (enter admin password)…")
     }
