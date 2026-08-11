@@ -34,6 +34,17 @@ sudo ./install.sh --watcher    # also install the auto-re-apply watcher
 Needs macOS + Xcode Command Line Tools (`xcode-select --install`). Admin is
 required because most apps in `/Applications` are owned by `root`.
 
+**Or run without installing** — straight from the repo, nothing copied to
+`/usr/local`, no background service:
+
+```sh
+./run.sh --dry-run   # preview (no admin)
+./run.sh             # apply (prompts for admin)
+```
+
+Installing only adds the `icon-normalizer` shortcut and (with `--watcher`) the
+background service; the scanner itself can just run from here.
+
 ## GUI (optional)
 
 ```sh

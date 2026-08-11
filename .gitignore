@@ -1,5 +1,6 @@
 # Local runtime artifacts (created at install/run time)
 venv/
+.venv/
 generated/
 state.json
 *.log
