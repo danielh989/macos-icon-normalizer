@@ -1,7 +1,8 @@
 #!/bin/bash
 # Set up icon-normalizer. Run with sudo.
 #
-#   sudo ./install.sh            # install the scanner + normalize now (on-demand)
+#   sudo ./install.sh            # install the scanner to /usr/local + normalize now
+#                                # (no background service; you re-apply when you want)
 #   sudo ./install.sh --watcher  # ALSO install the background watcher (auto re-apply)
 #
 # The watcher is optional: without it, nothing runs in the background — you

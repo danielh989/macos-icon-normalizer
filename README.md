@@ -27,7 +27,7 @@ that way after updates.
 ```sh
 git clone https://github.com/danielh989/macos-icon-normalizer.git
 cd macos-icon-normalizer
-sudo ./install.sh              # normalize now (on-demand, no background service)
+sudo ./install.sh              # install the scanner + normalize now (no background service)
 sudo ./install.sh --watcher    # also install the auto-re-apply watcher
 ```
 
