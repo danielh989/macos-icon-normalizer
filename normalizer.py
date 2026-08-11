@@ -61,6 +61,9 @@ ICONSET = [("16x16",16),("16x16@2x",32),("32x32",32),("32x32@2x",64),
 DRY    = "--dry-run" in sys.argv
 REVERT = "--revert" in sys.argv
 FORCE  = "--force" in sys.argv   # re-apply even if a custom icon is already set
+STOP   = "--stop-watcher" in sys.argv
+START  = "--start-watcher" in sys.argv
+CLEARLOG = "--clear-log" in sys.argv
 if "--squircle" in sys.argv:    SQUIRCLE = "on"
 if "--no-squircle" in sys.argv: SQUIRCLE = "off"
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -115,7 +118,38 @@ def is_apple(app):
     return False
 
 def custom_icon_present(app):
-    return os.path.exists(os.path.join(app, "Icon\r"))
+    icon = os.path.join(app, "Icon\r")
+    return os.path.exists(icon) and os.path.getsize(icon) > 0
+
+def strip_custom_icon(app):
+    """Fully remove a custom icon: delete the Icon resource AND clear the
+    kHasCustomIcon Finder flag. NSWorkspace.setIcon(None) leaves that flag set,
+    which makes Finder show a generic/folder icon -- so we clear it explicitly."""
+    icon = os.path.join(app, "Icon\r")
+    try:
+        if os.path.lexists(icon): os.remove(icon)
+    except OSError:
+        pass
+    subprocess.run(["xattr", "-d", "com.apple.FinderInfo", app], capture_output=True)
+
+# ---- watcher (launchd daemon) control ---------------------------------------
+def _daemon_plists():
+    return glob.glob("/Library/LaunchDaemons/*icon-normalizer*.plist")
+
+def stop_watcher():
+    for p in _daemon_plists():
+        label = os.path.splitext(os.path.basename(p))[0]
+        subprocess.run(["launchctl", "bootout", "system", p], capture_output=True)
+        subprocess.run(["launchctl", "disable", f"system/{label}"], capture_output=True)
+        log(f"watcher stopped: {label}")
+
+def start_watcher():
+    for p in _daemon_plists():
+        label = os.path.splitext(os.path.basename(p))[0]
+        subprocess.run(["launchctl", "enable", f"system/{label}"], capture_output=True)
+        subprocess.run(["launchctl", "bootstrap", "system", p], capture_output=True)
+        subprocess.run(["launchctl", "kickstart", "-k", f"system/{label}"], capture_output=True)
+        log(f"watcher started: {label}")
 
 # ---- "shows in Launchpad/Dock" via the Launchpad database -------------------
 def _console_user():
@@ -313,13 +347,18 @@ def revert():
     state = load_state()
     n = 0
     for app in list(state["applied"].keys()):
-        if os.path.isdir(app) and custom_icon_present(app):
-            if ws.setIcon_forFile_options_(None, app, 0):
-                log(f"reverted: {app}"); n += 1
+        if os.path.isdir(app):
+            ws.setIcon_forFile_options_(None, app, 0)
+            strip_custom_icon(app)        # clear the flag too, or Finder shows a folder icon
+            log(f"reverted: {app}"); n += 1
         state["applied"].pop(app, None)
     save_state(state)
-    if n: refresh_ui()
-    log(f"revert done: {n} app(s) restored")
+    # Stop the watcher, otherwise it would re-normalize these apps immediately.
+    stop_watcher()
+    if n:
+        subprocess.run(["/bin/rm","-rf","/Library/Caches/com.apple.iconservices.store"], check=False)
+        refresh_ui()
+    log(f"revert done: {n} app(s) restored; watcher stopped")
 
 def run():
     from AppKit import NSWorkspace, NSImage
@@ -376,5 +415,16 @@ def run():
         refresh_ui()
         log(f"done: normalized {changed}, Dock/Finder refreshed")
 
+def clear_log():
+    try:
+        open(LOG, "w").close()
+        print("log cleared")
+    except OSError as e:
+        print("could not clear log:", e)
+
 if __name__ == "__main__":
-    (revert if REVERT else run)()
+    if CLEARLOG:  clear_log()
+    elif STOP:    stop_watcher()
+    elif START:   start_watcher()
+    elif REVERT:  revert()
+    else:         run()

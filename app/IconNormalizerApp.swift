@@ -1,6 +1,6 @@
 // Icon Normalizer — small AppKit control panel for the icon-normalizer daemon.
-// Monitors the watcher log, and applies / resets icons with the chosen flags.
-// Build with app/build.sh (needs the Swift toolchain from Xcode / CLT).
+// Monitors the watcher log, and applies / resets icons and the watcher with the
+// chosen flags. Build with app/build.sh (needs the Swift toolchain).
 import AppKit
 
 let INSTALL = "/usr/local/icon-normalizer"
@@ -8,32 +8,24 @@ let PY  = "\(INSTALL)/venv/bin/python"
 let NRM = "\(INSTALL)/normalizer.py"
 let LOG = "\(INSTALL)/icon-normalizer.log"
 
-// Run a shell command as the current user; return combined stdout+stderr.
 func runShell(_ cmd: String) -> String {
-    let p = Process()
-    p.launchPath = "/bin/bash"
-    p.arguments = ["-lc", cmd]
-    let pipe = Pipe()
-    p.standardOutput = pipe; p.standardError = pipe
+    // -c (not -lc): don't source the login profile, which can print noise.
+    let p = Process(); p.launchPath = "/bin/bash"; p.arguments = ["-c", cmd]
+    let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
     do { try p.run() } catch { return "error: \(error)" }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    p.waitUntilExit()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
     return String(data: data, encoding: .utf8) ?? ""
 }
 
-// Run a shell command as root via the native admin-password prompt.
+// Run as root via the native admin-password prompt.
 func runAdmin(_ cmd: String) -> String {
-    let escaped = cmd.replacingOccurrences(of: "\\", with: "\\\\")
-                     .replacingOccurrences(of: "\"", with: "\\\"")
-    let osa = "do shell script \"\(escaped)\" with administrator privileges"
-    let p = Process()
-    p.launchPath = "/usr/bin/osascript"
-    p.arguments = ["-e", osa]
-    let pipe = Pipe()
-    p.standardOutput = pipe; p.standardError = pipe
+    let esc = cmd.replacingOccurrences(of: "\\", with: "\\\\")
+                 .replacingOccurrences(of: "\"", with: "\\\"")
+    let p = Process(); p.launchPath = "/usr/bin/osascript"
+    p.arguments = ["-e", "do shell script \"\(esc)\" with administrator privileges"]
+    let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
     do { try p.run() } catch { return "error: \(error)" }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    p.waitUntilExit()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
     return String(data: data, encoding: .utf8) ?? ""
 }
 
@@ -43,138 +35,187 @@ final class Controller: NSObject, NSApplicationDelegate {
     var logView: NSTextView!
     var squircle: NSSegmentedControl!
     var dryRun: NSButton!
+    var thresholdSlider: NSSlider!
+    var thresholdValue: NSTextField!
     var busy = false
 
+    // Quit when the window is closed (no menu bar to force-quit from).
+    func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
+
     func applicationDidFinishLaunching(_ note: Notification) {
-        let W: CGFloat = 560, H: CGFloat = 540, M: CGFloat = 16
+        let W: CGFloat = 600, H: CGFloat = 660, M: CGFloat = 18
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: W, height: H),
                           styleMask: [.titled, .closable, .miniaturizable],
                           backing: .buffered, defer: false)
-        window.title = "Icon Normalizer"
-        window.center()
+        window.title = "Icon Normalizer"; window.center()
         let v = window.contentView!
 
-        func label(_ s: String, _ f: NSRect, bold: Bool = false, size: CGFloat = 13) -> NSTextField {
+        @discardableResult
+        func lbl(_ s: String, _ f: NSRect, bold: Bool = false, size: CGFloat = 13,
+                 gray: Bool = false) -> NSTextField {
             let t = NSTextField(labelWithString: s); t.frame = f
-            t.font = bold ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size)
+            t.font = bold ? .boldSystemFont(ofSize: size) : .systemFont(ofSize: size)
+            if gray { t.textColor = .secondaryLabelColor }
+            t.lineBreakMode = .byWordWrapping; t.maximumNumberOfLines = 2
             v.addSubview(t); return t
         }
 
-        label("Icon Normalizer", NSRect(x: M, y: H-40, width: W-2*M, height: 24), bold: true, size: 17)
-        statusLabel = label("…", NSRect(x: M, y: H-64, width: W-2*M, height: 18), size: 12)
-        statusLabel.textColor = .secondaryLabelColor
+        lbl("Icon Normalizer", NSRect(x: M, y: H-42, width: W-2*M, height: 26), bold: true, size: 17)
+        statusLabel = lbl("…", NSRect(x: M, y: H-66, width: W-2*M, height: 18), size: 12, gray: true)
 
-        // Log monitor
-        label("Watcher log", NSRect(x: M, y: H-92, width: 200, height: 16), bold: true, size: 11)
-        let scroll = NSScrollView(frame: NSRect(x: M, y: 150, width: W-2*M, height: H-92-150-6))
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
+        // ---- log monitor ----
+        lbl("Watcher log", NSRect(x: M, y: H-92, width: 200, height: 16), bold: true, size: 11)
+        let bClear = NSButton(title: "Clear log", target: self, action: #selector(clearLog))
+        bClear.frame = NSRect(x: W-M-104, y: H-97, width: 104, height: 22)
+        bClear.bezelStyle = .rounded; bClear.controlSize = .small
+        bClear.font = .systemFont(ofSize: 11)
+        bClear.toolTip = "Empty the watcher log file."
+        v.addSubview(bClear)
+        let scroll = NSScrollView(frame: NSRect(x: M, y: 290, width: W-2*M, height: (H-98)-290))
+        scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         logView = NSTextView(frame: scroll.bounds)
         logView.isEditable = false
-        logView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        logView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         logView.autoresizingMask = [.width]
-        scroll.documentView = logView
-        v.addSubview(scroll)
+        scroll.documentView = logView; v.addSubview(scroll)
 
-        // Squircle selector
-        label("Squircle:", NSRect(x: M, y: 112, width: 70, height: 20))
+        // ---- threshold ----
+        lbl("Threshold", NSRect(x: M, y: 246, width: 80, height: 20))
+        thresholdSlider = NSSlider(value: 0.92, minValue: 0.80, maxValue: 0.98,
+                                   target: self, action: #selector(thresholdChanged))
+        thresholdSlider.frame = NSRect(x: M+90, y: 244, width: 250, height: 22)
+        thresholdSlider.toolTip = "Only icons whose art fills at least this fraction of the canvas are treated as oversized and resized."
+        v.addSubview(thresholdSlider)
+        thresholdValue = lbl("92%", NSRect(x: M+350, y: 246, width: 60, height: 20))
+        lbl("Minimum fill to count an icon as oversized (lower = affects more apps).",
+            NSRect(x: M, y: 226, width: W-2*M, height: 16), size: 11, gray: true)
+
+        // ---- squircle ----
+        lbl("Squircle", NSRect(x: M, y: 196, width: 80, height: 20))
         squircle = NSSegmentedControl(labels: ["Off", "Auto", "On"],
                                       trackingMode: .selectOne, target: nil, action: nil)
-        squircle.frame = NSRect(x: M+70, y: 108, width: 200, height: 26)
-        squircle.selectedSegment = 1  // Auto
+        squircle.frame = NSRect(x: M+90, y: 192, width: 200, height: 26)
+        squircle.selectedSegment = 1
+        squircle.toolTip = "Round square icons to Apple's native shape. Auto only does it when safe (flat, uniform corners); On may clip bordered icons."
         v.addSubview(squircle)
+        lbl("Off: keep shape · Auto: round only when safe · On: always (may clip borders).",
+            NSRect(x: M, y: 174, width: W-2*M, height: 16), size: 11, gray: true)
 
-        dryRun = NSButton(checkboxWithTitle: "Dry run (preview only, no changes)",
+        // ---- dry run ----
+        dryRun = NSButton(checkboxWithTitle: "Dry run — preview what would change, apply nothing",
                           target: nil, action: nil)
-        dryRun.frame = NSRect(x: M, y: 80, width: W-2*M, height: 20)
+        dryRun.frame = NSRect(x: M, y: 142, width: W-2*M, height: 20)
+        dryRun.toolTip = "Show which apps Apply would touch, without changing any icons."
         v.addSubview(dryRun)
 
-        // Buttons
-        func button(_ title: String, _ x: CGFloat, _ sel: Selector, key: String = "") -> NSButton {
+        // ---- main buttons ----
+        @discardableResult
+        func button(_ title: String, _ x: CGFloat, _ y: CGFloat, _ w: CGFloat,
+                    _ sel: Selector, tip: String, key: String = "") -> NSButton {
             let b = NSButton(title: title, target: self, action: sel)
-            b.frame = NSRect(x: x, y: M, width: 150, height: 34)
-            b.bezelStyle = .rounded
+            b.frame = NSRect(x: x, y: y, width: w, height: 34)
+            b.bezelStyle = .rounded; b.toolTip = tip
             if !key.isEmpty { b.keyEquivalent = key }
             v.addSubview(b); return b
         }
-        button("Apply now", M, #selector(apply), key: "\r")
-        button("Reset icons", M+160, #selector(reset))
-        button("Refresh", M+320, #selector(refresh))
+        button("Apply now", M, 92, 150, #selector(apply),
+               tip: "Normalize oversized icons now with the settings above (asks for admin password).", key: "\r")
+        button("Reset icons", M+165, 92, 150, #selector(reset),
+               tip: "Restore original icons AND stop the watcher so they stay reset.")
+        button("Refresh", M+330, 92, 130, #selector(refresh),
+               tip: "Reload status and log.")
 
+        // ---- watcher controls ----
+        lbl("Watcher", NSRect(x: M, y: 48, width: 80, height: 20))
+        button("Start watcher", M+90, 42, 150, #selector(startWatcher),
+               tip: "Enable the background service that re-normalizes icons after app updates.")
+        button("Stop watcher", M+250, 42, 150, #selector(stopWatcher),
+               tip: "Disable the background service. Icons stay as they are until you start it again.")
+        lbl("The watcher re-applies automatically after app updates. Reset stops it.",
+            NSRect(x: M, y: 16, width: W-2*M, height: 16), size: 11, gray: true)
+
+        thresholdChanged(thresholdSlider)
         refresh(self)
-        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            self?.refresh(nil)
-        }
+        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in self?.refresh(nil) }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func shq(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    func thresholdString() -> String { String(format: "%.2f", thresholdSlider.doubleValue) }
     func squircleFlag() -> String {
-        switch squircle.selectedSegment {
-        case 0: return "--no-squircle"
-        case 2: return "--squircle"
-        default: return ""
-        }
+        switch squircle.selectedSegment { case 0: return "--no-squircle"; case 2: return "--squircle"; default: return "" }
+    }
+
+    @objc func thresholdChanged(_ s: Any?) {
+        thresholdValue.stringValue = "\(Int((thresholdSlider.doubleValue*100).rounded()))%"
     }
 
     @objc func refresh(_ sender: Any?) {
-        // status
-        let plist = runShell("ls /Library/LaunchDaemons/*icon-normalizer*.plist 2>/dev/null | head -1").trimmingCharacters(in: .whitespacesAndNewlines)
+        let plist = runShell("ls /Library/LaunchDaemons/*icon-normalizer*.plist 2>/dev/null | head -1")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let installed = !plist.isEmpty && FileManager.default.fileExists(atPath: NRM)
+        var running = false
+        if installed {
+            let label = (plist as NSString).lastPathComponent.replacingOccurrences(of: ".plist", with: "")
+            running = runShell("launchctl print system/\(label) >/dev/null 2>&1 && echo yes")
+                .contains("yes")
+        }
         let last = runShell("tail -n 1 \(shq(LOG)) 2>/dev/null").trimmingCharacters(in: .whitespacesAndNewlines)
         statusLabel.stringValue = installed
-            ? "Watcher: installed ✓   •   last log: \(last.isEmpty ? "—" : last)"
-            : "Watcher: not installed — run install.sh first"
-        // log tail
+            ? "Watcher: \(running ? "running ✓" : "stopped ✕")   •   \(last.isEmpty ? "no log yet" : last)"
+            : "Not installed — run install.sh first."
         let tail = runShell("tail -n 200 \(shq(LOG)) 2>/dev/null")
-        if logView.string != tail {
-            logView.string = tail
-            logView.scrollToEndOfDocument(nil)
+        if logView.string != tail { logView.string = tail; logView.scrollToEndOfDocument(nil) }
+    }
+
+    func runAdminAction(_ cmd: String, _ status: String) {
+        if busy { return }
+        busy = true; statusLabel.stringValue = status
+        DispatchQueue.global().async {
+            _ = runAdmin(cmd)
+            DispatchQueue.main.async { self.busy = false; self.refresh(nil) }
         }
     }
 
-    func shq(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-
-    func setBusy(_ b: Bool) { busy = b }
-
     @objc func apply(_ sender: Any?) {
         if busy { return }
-        let sq = squircleFlag()
-        let dry = dryRun.state == .on
-        let cmd = "\(shq(PY)) \(shq(NRM)) \(dry ? "--dry-run" : "--force") \(sq)"
-        setBusy(true)
-        statusLabel.stringValue = dry ? "Previewing…" : "Applying (enter admin password)…"
-        DispatchQueue.global().async {
-            let out = dry ? runShell(cmd) : runAdmin(cmd)
-            DispatchQueue.main.async {
-                self.setBusy(false)
-                if dry { self.showSheet("Dry-run preview", out) }
-                self.refresh(nil)
+        let env = "ICON_NORMALIZER_THRESHOLD=\(thresholdString())"
+        let cmd = "\(env) \(shq(PY)) \(shq(NRM)) \(dryRun.state == .on ? "--dry-run" : "--force") \(squircleFlag())"
+        if dryRun.state == .on {
+            busy = true; statusLabel.stringValue = "Previewing…"
+            DispatchQueue.global().async {
+                let out = runShell(cmd)
+                DispatchQueue.main.async {
+                    self.busy = false
+                    let a = NSAlert(); a.messageText = "Dry-run preview"
+                    a.informativeText = out.isEmpty ? "(no output)" : out; a.runModal()
+                    self.refresh(nil)
+                }
             }
+        } else {
+            runAdminAction(cmd, "Applying (enter admin password)…")
         }
     }
 
     @objc func reset(_ sender: Any?) {
         if busy { return }
-        let alert = NSAlert()
-        alert.messageText = "Restore original icons?"
-        alert.informativeText = "This removes the custom icons applied by this tool."
-        alert.addButton(withTitle: "Reset")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let cmd = "\(shq(PY)) \(shq(NRM)) --revert"
-        setBusy(true)
-        statusLabel.stringValue = "Resetting (enter admin password)…"
-        DispatchQueue.global().async {
-            _ = runAdmin(cmd)
-            DispatchQueue.main.async { self.setBusy(false); self.refresh(nil) }
-        }
+        let a = NSAlert()
+        a.messageText = "Restore original icons?"
+        a.informativeText = "Removes the custom icons applied by this tool and stops the watcher so they stay reset."
+        a.addButton(withTitle: "Reset"); a.addButton(withTitle: "Cancel")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        runAdminAction("\(shq(PY)) \(shq(NRM)) --revert", "Resetting (enter admin password)…")
     }
 
-    func showSheet(_ title: String, _ body: String) {
-        let a = NSAlert(); a.messageText = title
-        a.informativeText = body.isEmpty ? "(no output)" : body
-        a.runModal()
+    @objc func clearLog(_ s: Any?) {
+        runAdminAction("\(shq(PY)) \(shq(NRM)) --clear-log", "Clearing log…")
+    }
+    @objc func startWatcher(_ s: Any?) {
+        runAdminAction("\(shq(PY)) \(shq(NRM)) --start-watcher", "Starting watcher…")
+    }
+    @objc func stopWatcher(_ s: Any?) {
+        runAdminAction("\(shq(PY)) \(shq(NRM)) --stop-watcher", "Stopping watcher…")
     }
 }
 

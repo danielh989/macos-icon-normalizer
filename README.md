@@ -153,11 +153,13 @@ cd app
 open "Icon Normalizer.app"
 ```
 
-It shows the daemon status and a live tail of the log, has an **Off / Auto / On**
-squircle selector and a **Dry run** toggle, and buttons for **Apply now**,
-**Reset icons**, and **Refresh**. Apply/Reset prompt for your admin password
-(needed to touch root-owned apps). The build is ad-hoc signed, so on first launch
-right-click → **Open** to get past Gatekeeper.
+It shows the watcher status and a live tail of the log (with a **Clear log**
+button), a **Threshold** slider, an **Off / Auto / On** squircle selector (each
+control has an inline hint and tooltip), and a **Dry run** toggle. Buttons:
+**Apply now**, **Reset icons** (also stops the watcher so the reset sticks),
+**Refresh**, and **Start / Stop watcher**. Actions that touch root-owned apps
+prompt for your admin password. Closing the window quits the app. The build is
+ad-hoc signed, so on first launch right-click → **Open** to get past Gatekeeper.
 
 ---
 
