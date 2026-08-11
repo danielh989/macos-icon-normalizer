@@ -11,6 +11,9 @@ and can round square ones into the native squircle.
 
 ![Before / after](docs/before-after.png)
 
+*Resized to the native size, and (for square icons) rounded to the native
+squircle — the same shape macOS uses for Tahoe's Liquid Glass icons.*
+
 ## Use it
 
 **Fix your icons now** — nothing gets installed:
