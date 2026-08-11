@@ -1,23 +1,20 @@
 #!/bin/bash
-# Set up icon-normalizer. Run with sudo.
+# Install the background watcher: normalizes your icons now, then re-applies them
+# automatically after app updates. Run with sudo:
 #
-#   sudo ./install.sh            # install the scanner to /usr/local + normalize now
-#                                # (no background service; you re-apply when you want)
-#   sudo ./install.sh --watcher  # ALSO install the background watcher (auto re-apply)
+#   sudo ./install.sh
 #
-# The watcher is optional: without it, nothing runs in the background — you
-# re-apply from the GUI or CLI whenever you like. Add --watcher for a launchd
-# service that re-normalizes automatically after app updates.
+# You only need this if you want it to run automatically. For a one-off fix,
+# just use ./run.sh — nothing gets installed.
 #
 # Env: ICON_NORMALIZER_THRESHOLD=0.90 changes the "oversized" cutoff.
 set -e
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Please run with sudo:  sudo ./install.sh [--watcher]" >&2
+    echo "Please run:  sudo ./install.sh" >&2
     exit 1
 fi
 
-WATCHER=0; [ "$1" = "--watcher" ] && WATCHER=1
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="/usr/local/icon-normalizer"
 LABEL="com.icon-normalizer.daemon"
@@ -25,34 +22,28 @@ PLIST="/Library/LaunchDaemons/$LABEL.plist"
 WRAPPER="$DEST/Icon Normalizer"
 THRESHOLD="${ICON_NORMALIZER_THRESHOLD:-0.92}"
 
-echo "==> Installing scanner to $DEST"
+echo "==> Installing to $DEST"
 mkdir -p "$DEST"
 cp -f "$REPO/normalizer.py" "$DEST/"
-
-echo "==> Creating self-contained venv (Pillow + pyobjc)"
 [ -x "$DEST/venv/bin/python" ] || /usr/bin/python3 -m venv "$DEST/venv"
 "$DEST/venv/bin/pip" install --quiet --upgrade pip
 "$DEST/venv/bin/pip" install --quiet --disable-pip-version-check -r "$REPO/requirements.txt"
-"$DEST/venv/bin/python" -c "import PIL, AppKit; print('   deps OK')"
+"$DEST/venv/bin/python" -c "import PIL, AppKit" && echo "    deps OK"
 
-echo "==> Writing launcher wrapper"
 cat > "$WRAPPER" <<EOF
 #!/bin/sh
 exec "$DEST/venv/bin/python" "$DEST/normalizer.py" "\$@"
 EOF
 chmod 755 "$WRAPPER"
 codesign --force --sign - "$WRAPPER" 2>/dev/null || true
-
-# Short command on PATH so re-running is just `sudo icon-normalizer [flags]`.
 mkdir -p /usr/local/bin
-ln -sf "$WRAPPER" /usr/local/bin/icon-normalizer
+ln -sf "$WRAPPER" /usr/local/bin/icon-normalizer   # short command for manual re-runs
 
-echo "==> Normalizing current icons"
+echo "==> Normalizing your icons now"
 ICON_NORMALIZER_THRESHOLD="$THRESHOLD" "$DEST/venv/bin/python" "$DEST/normalizer.py" || true
 
-if [ "$WATCHER" = "1" ]; then
-    echo "==> Installing background watcher ($LABEL)"
-    cat > "$PLIST" <<EOF
+echo "==> Installing the watcher ($LABEL)"
+cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -72,19 +63,12 @@ if [ "$WATCHER" = "1" ]; then
 </dict>
 </plist>
 EOF
-    chown root:wheel "$PLIST"; chmod 644 "$PLIST"
-    launchctl bootout system "$PLIST" 2>/dev/null || true
-    launchctl bootstrap system "$PLIST"
-    launchctl enable "system/$LABEL"
-    launchctl kickstart -k "system/$LABEL" || true
-    echo "    watcher active — will re-normalize after app updates."
-else
-    echo ""
-    echo "Watcher NOT installed (on-demand mode)."
-    echo "Enable auto re-apply with:  sudo ./install.sh --watcher"
-fi
+chown root:wheel "$PLIST"; chmod 644 "$PLIST"
+launchctl bootout system "$PLIST" 2>/dev/null || true
+launchctl bootstrap system "$PLIST"
+launchctl enable "system/$LABEL"
+launchctl kickstart -k "system/$LABEL" || true
 
 echo ""
-echo "DONE (threshold ${THRESHOLD})."
-echo "  Re-run anytime:  sudo icon-normalizer            (add --dry-run / --force)"
-echo "  Uninstall:       sudo ./uninstall.sh"
+echo "DONE. The watcher is active — your icons stay normalized after updates."
+echo "  Uninstall:  sudo ./uninstall.sh"

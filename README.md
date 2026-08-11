@@ -6,113 +6,83 @@
 
 Some macOS apps (audio plugins, vendor tools, cross-platform apps) ship icons
 that fill the whole canvas or use hard square corners, so they look **too big**
-or **off-shape** next to Apple's icons. This resizes them to the native
-proportion — and can round square ones into the native squircle — and keeps them
-that way after updates.
+or **off-shape** next to Apple's. This resizes them to the native proportion —
+and can round square ones into the native squircle.
 
 ![Before / after](docs/before-after.png)
 
-## What it does
+## Use it
 
-- Scans installed apps; **resizes** any icon that fills ≥ 92% of the canvas to ~82%.
-- Optionally **rounds** flat-cornered square icons to Apple's squircle shape.
-- Applies them as a **custom icon** — it never edits the app bundle or its code
-  signature, and it's fully reversible.
-- Only touches **user-facing, non-Apple** apps (it reads the Launchpad database;
-  on Tahoe, where Launchpad is gone, it falls back to `Info.plist` heuristics).
-- An **optional** background watcher re-applies automatically after app updates.
-
-## Install
+**Fix your icons now** — nothing gets installed:
 
 ```sh
 git clone https://github.com/danielh989/macos-icon-normalizer.git
 cd macos-icon-normalizer
-sudo ./install.sh              # install the scanner + normalize now (no background service)
-sudo ./install.sh --watcher    # also install the auto-re-apply watcher
+./run.sh
 ```
 
-Needs macOS + Xcode Command Line Tools (`xcode-select --install`). Admin is
-required because most apps in `/Applications` are owned by `root`.
+That's it. (`./run.sh --dry-run` first if you want to preview.) Run it again
+whenever you install or update apps.
 
-**Or run without installing** — straight from the repo, nothing copied to
-`/usr/local`, no background service:
+**Keep them fixed automatically** — optional. Only install this if you want a
+background service that re-applies after every app update:
 
 ```sh
-./run.sh --dry-run   # preview (no admin)
-./run.sh             # apply (prompts for admin)
+sudo ./install.sh
 ```
 
-Installing only adds the `icon-normalizer` shortcut and (with `--watcher`) the
-background service; the scanner itself can just run from here.
+Needs macOS + Xcode Command Line Tools (the first run offers to install them if
+missing). You'll be asked for your password because most apps in `/Applications`
+are owned by `root`.
 
-## GUI (optional)
+## What it does
 
-```sh
-cd app && ./build.sh && open "Icon Normalizer.app"
-```
+- Resizes any icon that fills ≥ 92% of the canvas down to the native ~82%.
+- Rounds flat-cornered square icons to Apple's squircle shape (skips ones with a
+  border — rounding would clip it).
+- Applies them as a **custom icon** — never edits the app bundle or its code
+  signature, and it's fully reversible (`./run.sh --revert`).
+- Only touches **user-facing, non-Apple** apps.
 
-A small panel: live log, **Threshold** slider, **Off/Auto/On** squircle,
-**Dry run**, and buttons for **Apply**, **Reset**, **Install/Start/Stop watcher**,
-and **Clear log**. Actions that touch root-owned apps prompt for your password.
+## Options
 
-## Re-run it later
+Pass to `run.sh` (e.g. `./run.sh --squircle`) or set as env vars:
 
-Install adds a short command on your PATH, so re-applying (e.g. after installing
-or updating an app) is just:
-
-```sh
-sudo icon-normalizer            # re-apply to oversized apps
-sudo icon-normalizer --dry-run  # preview, change nothing
-sudo icon-normalizer --force    # re-apply even to already-customized apps
-sudo icon-normalizer --revert   # restore originals (also stops the watcher)
-```
-
-…or open the GUI and click **Apply**. (With the watcher installed, this happens
-automatically after app updates.)
-
-## Configuration
-
-Set as env vars (bake in at install, or edit the daemon plist), or use `--squircle` / `--no-squircle`:
-
-| Variable | Default | Meaning |
+| Setting | Default | Meaning |
 | --- | --- | --- |
 | `ICON_NORMALIZER_THRESHOLD` | `0.92` | Min canvas fill to count as oversized (lower = more apps). |
-| `ICON_NORMALIZER_CONTENT` | `0.82` | Target fill after normalization. |
-| `ICON_NORMALIZER_SQUIRCLE` | `auto` | `auto` rounds only flat, uniform, opaque-cornered squares; `on` always; `off` never. |
-| `ICON_NORMALIZER_SCAN_DIRS` | `/Applications` | Colon-separated roots to scan. |
-
-> Squircle rounding clips the corners, so icons with a **border/frame** are left
-> as plain resizing (rounding them would look broken). Force with `on` if you want.
+| `ICON_NORMALIZER_SQUIRCLE` | `auto` | `auto` rounds only safe flat-cornered squares; `on` always; `off` never. |
+| `--revert` | | Restore original icons (and stop the watcher). |
+| `--force` | | Re-apply even to already-customized apps. |
 
 ## Security & trust
 
-This is an unsigned personal tool that needs admin rights — so it's built to be
-easy to audit, and does the least it can:
+An unsigned personal tool that needs admin — so it's built to be easy to audit
+and does the least it can:
 
-- **Admin/root** is only to write icons on `root`-owned apps and (optionally) to
-  install the watcher. Nothing else needs it.
-- **No network**, ever, except `pip` fetching Pillow/pyobjc into a local venv
-  during install. It never phones home.
-- **Never edits app bundles or code signatures** — icons are applied as a
-  separate custom-icon resource, and `--revert` removes them.
-- **Not notarized** → it appears as "unidentified developer" (removing that needs
-  a paid Apple Developer ID). Read the source before running; it's small.
-- Provided **as-is, no warranty** ([MIT](LICENSE)).
+- **Admin** is only to write icons on `root`-owned apps and (optionally) install
+  the watcher. Nothing else needs it.
+- **No network**, except `pip` fetching Pillow/pyobjc into a local venv on first
+  run. It never phones home.
+- **Never edits app bundles or code signatures.** Icons are a separate custom
+  resource; `--revert` removes them.
+- Provided **as-is, no warranty** ([MIT](LICENSE)). Read the source first — it's small.
 
 ## Compatibility
 
-- **macOS 15 Sequoia** — primary target (also expected on earlier releases).
-- **macOS 26 Tahoe** — works; Launchpad's DB is gone so it uses `Info.plist`
-  heuristics, and it renders third-party icons as provided (so both resizing and
-  squircle rounding help, same as Sequoia).
+- **macOS 15 Sequoia** — primary target (likely fine on earlier releases).
+- **macOS 26 Tahoe** — works (falls back to `Info.plist` heuristics since
+  Launchpad's database is gone); resizing and squircle rounding both apply.
 - **macOS 27 Golden Gate** — inherits Tahoe's icon system; not directly tested.
 
 ## Uninstall
 
 ```sh
-sudo ./uninstall.sh              # remove everything, restore original icons
+sudo ./uninstall.sh              # remove the watcher, restore original icons
 sudo ./uninstall.sh --keep-icons # remove the watcher but keep normalized icons
 ```
+
+*(An optional GUI lives in [`app/`](app/) for anyone who wants to build it with Xcode.)*
 
 ## License
 
