@@ -3,11 +3,12 @@
 # automatically after app updates. Run with sudo:
 #
 #   sudo ./install.sh
+#   sudo ./install.sh --squircle --threshold=0.90
 #
 # You only need this if you want it to run automatically. For a one-off fix,
-# just use ./run.sh — nothing gets installed.
-#
-# Env: ICON_NORMALIZER_THRESHOLD=0.90 changes the "oversized" cutoff.
+# just use ./run.sh — nothing gets installed. The watcher inherits whatever
+# options you pass here (--squircle / --no-squircle / --threshold=, or the
+# matching ICON_NORMALIZER_* env vars).
 set -e
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -20,6 +21,19 @@ DEST="/usr/local/icon-normalizer"
 LABEL="com.icon-normalizer.daemon"
 PLIST="/Library/LaunchDaemons/$LABEL.plist"
 WRAPPER="$DEST/Icon Normalizer"
+
+# Accept the same options as run.sh (flags override env vars), so the watcher
+# inherits exactly the settings you want:
+#   sudo ./install.sh --squircle --threshold=0.90
+for arg in "$@"; do
+    case "$arg" in
+        --squircle)      ICON_NORMALIZER_SQUIRCLE=on ;;
+        --no-squircle)   ICON_NORMALIZER_SQUIRCLE=off ;;
+        --threshold=*)   ICON_NORMALIZER_THRESHOLD="${arg#*=}" ;;
+        *) echo "Unknown option: $arg" >&2; exit 1 ;;
+    esac
+done
+
 THRESHOLD="${ICON_NORMALIZER_THRESHOLD:-0.92}"
 
 # The watcher inherits the same settings you'd pass to run.sh. Threshold always
