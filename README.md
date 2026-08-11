@@ -78,6 +78,11 @@ and does the least it can:
   Launchpad's database is gone); resizing and squircle rounding both apply.
 - **macOS 27 Golden Gate** — inherits Tahoe's icon system; not directly tested.
 
+Tahoe's Liquid Glass drops non-conforming icons into a gray **"icon jail"**.
+Giving an icon the native shape/margin lets it render as a clean squircle instead:
+
+![Tahoe icon jail vs normalized](docs/tahoe-icon-jail.png)
+
 ## Uninstall
 
 ```sh
