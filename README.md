@@ -44,15 +44,20 @@ A small panel: live log, **Threshold** slider, **Off/Auto/On** squircle,
 **Dry run**, and buttons for **Apply**, **Reset**, **Install/Start/Stop watcher**,
 and **Clear log**. Actions that touch root-owned apps prompt for your password.
 
-## Usage (CLI)
+## Re-run it later
+
+Install adds a short command on your PATH, so re-applying (e.g. after installing
+or updating an app) is just:
 
 ```sh
-P=/usr/local/icon-normalizer/venv/bin/python N=/usr/local/icon-normalizer/normalizer.py
-sudo $P $N --dry-run     # preview, change nothing
-sudo $P $N --force       # (re)apply to all oversized apps
-sudo $P $N --revert      # restore originals (also stops the watcher)
-sudo $P $N --stop-watcher / --start-watcher / --clear-log
+sudo icon-normalizer            # re-apply to oversized apps
+sudo icon-normalizer --dry-run  # preview, change nothing
+sudo icon-normalizer --force    # re-apply even to already-customized apps
+sudo icon-normalizer --revert   # restore originals (also stops the watcher)
 ```
+
+…or open the GUI and click **Apply**. (With the watcher installed, this happens
+automatically after app updates.)
 
 ## Configuration
 

@@ -43,6 +43,10 @@ EOF
 chmod 755 "$WRAPPER"
 codesign --force --sign - "$WRAPPER" 2>/dev/null || true
 
+# Short command on PATH so re-running is just `sudo icon-normalizer [flags]`.
+mkdir -p /usr/local/bin
+ln -sf "$WRAPPER" /usr/local/bin/icon-normalizer
+
 echo "==> Normalizing current icons"
 ICON_NORMALIZER_THRESHOLD="$THRESHOLD" "$DEST/venv/bin/python" "$DEST/normalizer.py" || true
 
@@ -81,4 +85,6 @@ else
 fi
 
 echo ""
-echo "DONE (threshold ${THRESHOLD}).  Uninstall: sudo ./uninstall.sh"
+echo "DONE (threshold ${THRESHOLD})."
+echo "  Re-run anytime:  sudo icon-normalizer            (add --dry-run / --force)"
+echo "  Uninstall:       sudo ./uninstall.sh"

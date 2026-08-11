@@ -26,7 +26,8 @@ else
     echo "==> Leaving normalized icons in place"
 fi
 
-echo "==> Removing $DEST"
+echo "==> Removing $DEST and command"
 rm -rf "$DEST"
+rm -f /usr/local/bin/icon-normalizer
 
 echo "DONE. icon-normalizer removed."
